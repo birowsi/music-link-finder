@@ -19,7 +19,7 @@
   }
   function setStatus(title, detail, kind = '') {
     status.className = `empty-state ${kind}`;
-    status.replaceChildren(element('div', 'empty-icon', kind === 'error' ? '!' : '♫'), element('h3', '', title), element('p', '', detail));
+    status.replaceChildren(element('span', 'state-symbol', kind === 'error' ? '!' : kind === 'loading' ? '···' : '—'), element('h3', '', title), element('p', '', detail));
     status.hidden = false;
     results.hidden = true;
     count.hidden = true;
@@ -37,14 +37,14 @@
       fallback.hidden = false;
       fallbackUrl.focus();
       fallbackUrl.select();
-      fallback.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      fallback.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'nearest' });
     }
   }
   document.querySelector('#fallback-select').addEventListener('click', () => { fallbackUrl.focus(); fallbackUrl.select(); });
 
   function group(label, items, recommended) {
     if (!items.length) return;
-    const heading = element('div', 'group-title');
+    const heading = element('div', recommended ? 'group-title recommend-group' : 'group-title');
     heading.append(element('strong', '', label), element('span', '', `${items.length}개 영상`));
     results.append(heading);
     items.forEach((video, index) => {
@@ -56,7 +56,7 @@
       const channel = element('p', 'video-channel', video.channel);
       const meta = element('div', 'video-meta');
       if (recommended) meta.append(element('span', 'tag recommend', '다른 곡 추천'));
-      for (const match of video.matched.slice(0, 3)) meta.append(element('span', 'tag', match));
+      for (const match of (Array.isArray(video.matched) ? video.matched : []).slice(0, 3)) meta.append(element('span', 'tag', match));
       const actions = element('div', 'video-actions');
       const copy = element('button', '', '링크 복사');
       copy.type = 'button';
@@ -76,6 +76,7 @@
   function render(videos) {
     results.replaceChildren();
     fallback.hidden = true;
+    videos = videos.filter(video => video && typeof video.url === 'string' && /^https:\/\/www\.youtube\.com\/watch\?v=[a-zA-Z0-9_-]{11}$/.test(video.url));
     if (!videos.length) { setStatus('조건에 맞는 영상이 없어요', '다른 곡명이나 검색 유형으로 다시 검색해 보세요.'); return; }
     const exact = videos.filter(item => !item.is_recommendation);
     const recs = videos.filter(item => item.is_recommendation);
@@ -106,7 +107,7 @@
     } catch (error) {
       if (error.name !== 'AbortError') setStatus('검색에 문제가 생겼어요', error.message || '연결 상태를 확인하고 다시 시도해 주세요.', 'error');
     } finally {
-      if (!current.signal.aborted) { button.disabled = false; buttonText.textContent = '링크 찾아보기'; }
+      if (!current.signal.aborted) { button.disabled = false; buttonText.textContent = '영상 찾기'; }
     }
   });
 })();
