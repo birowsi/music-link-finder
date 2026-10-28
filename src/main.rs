@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use music_link_finder::relay::{AfterSearch, HostingEvent, RelayHost};
 use music_link_finder::search::{SearchMode, VideoResult, search_youtube};
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
@@ -36,9 +37,13 @@ const APP_NAME: &str = "음악 한글발음 링크 찾기";
 const CLASS_NAME: &str = "MusicLinkFinderNativeWindow";
 const WM_SEARCH_DONE: u32 = WM_APP + 1;
 const WM_TRIGGER_SEARCH: u32 = WM_APP + 2;
+const WM_HOSTING_EVENT: u32 = WM_APP + 3;
 #[cfg(debug_assertions)]
 const WM_DEBUG_COPY_QUERY: u32 = WM_APP + 99;
 const ID_QUERY: i32 = 101;
+const ID_AUTO_PROXY: usize = 102;
+const ID_AUTO_COPY: usize = 103;
+const HOSTED_HINT: &str = "중계 링크 · 자동 프록싱을 켜고 검색하면 여기에 표시됩니다.";
 
 const fn rgb(red: u32, green: u32, blue: u32) -> u32 {
     red | (green << 8) | (blue << 16)
@@ -64,6 +69,7 @@ enum HitZone {
     Karaoke,
     Copy,
     Open,
+    CopyHosted,
     Result(usize),
 }
 
@@ -76,6 +82,14 @@ enum StatusTone {
 
 struct AppState {
     query: HWND,
+    proxy_toggle: HWND,
+    copy_toggle: HWND,
+    hosted_field: HWND,
+    after_search: AfterSearch,
+    relay: Option<RelayHost>,
+    hosting_generation: u64,
+    hosting: bool,
+    hosted: Option<(String, String)>,
     font_body: HFONT,
     font_button: HFONT,
     font_small: HFONT,
@@ -96,6 +110,14 @@ impl AppState {
     fn new() -> Self {
         Self {
             query: null_mut(),
+            proxy_toggle: null_mut(),
+            copy_toggle: null_mut(),
+            hosted_field: null_mut(),
+            after_search: AfterSearch::None,
+            relay: None,
+            hosting_generation: 0,
+            hosting: false,
+            hosted: None,
             font_body: null_mut(),
             font_button: null_mut(),
             font_small: null_mut(),
@@ -119,15 +141,24 @@ struct UiLayout {
     search: RECT,
     pronunciation: RECT,
     karaoke: RECT,
+    proxy_toggle: RECT,
+    copy_toggle: RECT,
     results: Vec<RECT>,
     copy: RECT,
     open: RECT,
+    copy_hosted: RECT,
+    hosted_field: RECT,
     status: RECT,
 }
 
 enum SearchOutcome {
     Success(Vec<VideoResult>),
     Error(String),
+}
+
+struct HostingMessage {
+    generation: u64,
+    event: HostingEvent,
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -238,6 +269,81 @@ unsafe extern "system" fn edit_subclass_proc(
     unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
 
+// Keep the native checkbox's keyboard and accessibility behavior while drawing
+// it as an on/off switch to match the two automatic-action options.
+unsafe extern "system" fn toggle_subclass_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _subclass_id: usize,
+    _reference_data: usize,
+) -> LRESULT {
+    if message == WM_PAINT {
+        let mut paint: PAINTSTRUCT = unsafe { zeroed() };
+        let dc = unsafe { BeginPaint(hwnd, &mut paint) };
+        let mut rect: RECT = unsafe { zeroed() };
+        unsafe {
+            GetClientRect(hwnd, &mut rect);
+        }
+        let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
+        let checked = unsafe { SendMessageW(hwnd, BM_GETCHECK, 0, 0) } != 0;
+        let brush = unsafe { CreateSolidBrush(BG) };
+        unsafe {
+            FillRect(dc, &rect, brush);
+            DeleteObject(brush as _);
+        }
+        let track = RECT {
+            left: scale(2, dpi),
+            top: scale(5, dpi),
+            right: scale(38, dpi),
+            bottom: scale(25, dpi),
+        };
+        let left = scale(if checked { 20 } else { 4 }, dpi);
+        let knob = RECT {
+            left,
+            top: scale(7, dpi),
+            right: left + scale(16, dpi),
+            bottom: scale(23, dpi),
+        };
+        let label = RECT {
+            left: scale(48, dpi),
+            ..rect
+        };
+        let font = unsafe { SendMessageW(hwnd, WM_GETFONT, 0, 0) } as HFONT;
+        unsafe {
+            rounded_box(
+                dc,
+                track,
+                if checked { SUCCESS } else { BORDER },
+                if checked { SUCCESS } else { BORDER },
+                scale(20, dpi),
+            );
+            rounded_box(dc, knob, SURFACE, SURFACE, scale(16, dpi));
+            draw_text(
+                dc,
+                &get_text(hwnd),
+                label,
+                TEXT,
+                font,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
+            if GetFocus() == hwnd {
+                DrawFocusRect(dc, &rect);
+            }
+            EndPaint(hwnd, &paint);
+        }
+        return 0;
+    }
+    let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+    if matches!(message, WM_SETFOCUS | WM_KILLFOCUS | BM_SETCHECK) {
+        unsafe {
+            InvalidateRect(hwnd, null(), 0);
+        }
+    }
+    result
+}
+
 unsafe fn set_status(hwnd: HWND, state: &mut AppState, text: impl Into<String>, tone: StatusTone) {
     state.status = text.into();
     state.status_tone = tone;
@@ -287,6 +393,11 @@ unsafe fn replace_fonts(hwnd: HWND, state: &mut AppState) {
     if !state.query.is_null() {
         unsafe { SendMessageW(state.query, WM_SETFONT, state.font_body as usize, 1) };
     }
+    for control in [state.proxy_toggle, state.copy_toggle, state.hosted_field] {
+        if !control.is_null() {
+            unsafe { SendMessageW(control, WM_SETFONT, state.font_small as usize, 1) };
+        }
+    }
 }
 
 fn make_layout(hwnd: HWND) -> UiLayout {
@@ -303,14 +414,16 @@ fn make_layout(hwnd: HWND) -> UiLayout {
     let segment_top = input_top + input_h + scale(14, dpi);
     let segment_h = scale(44, dpi);
     let segment_w = scale(205, dpi);
-    let results_top = segment_top + segment_h + scale(58, dpi);
+    let toggle_top = segment_top + segment_h + scale(12, dpi);
+    let results_top = toggle_top + scale(76, dpi);
     let action_h = scale(48, dpi);
     let action_w = scale(174, dpi);
     let action_top = height - m - action_h;
     let status_h = scale(28, dpi);
     let status_top = action_top - status_h - scale(16, dpi);
     let result_gap = scale(9, dpi);
-    let result_area = (status_top - scale(12, dpi) - results_top).max(scale(240, dpi));
+    let hosted_top = status_top - scale(42, dpi);
+    let result_area = (hosted_top - scale(12, dpi) - results_top).max(scale(240, dpi));
     let row_h = ((result_area - result_gap * 4) / 5).max(scale(52, dpi));
     let mut results = Vec::with_capacity(5);
     for index in 0..5 {
@@ -347,6 +460,18 @@ fn make_layout(hwnd: HWND) -> UiLayout {
             right: m + segment_w * 2 + gap,
             bottom: segment_top + segment_h,
         },
+        proxy_toggle: RECT {
+            left: m,
+            top: toggle_top,
+            right: m + scale(225, dpi),
+            bottom: toggle_top + scale(30, dpi),
+        },
+        copy_toggle: RECT {
+            left: m + scale(240, dpi),
+            top: toggle_top,
+            right: m + scale(465, dpi),
+            bottom: toggle_top + scale(30, dpi),
+        },
         results,
         copy: RECT {
             left: m,
@@ -359,6 +484,18 @@ fn make_layout(hwnd: HWND) -> UiLayout {
             top: action_top,
             right: m + action_w * 2 + gap,
             bottom: action_top + action_h,
+        },
+        copy_hosted: RECT {
+            left: m + (action_w + gap) * 2,
+            top: action_top,
+            right: m + action_w * 3 + gap * 2,
+            bottom: action_top + action_h,
+        },
+        hosted_field: RECT {
+            left: m,
+            top: hosted_top,
+            right: width - m,
+            bottom: hosted_top + scale(30, dpi),
         },
         status: RECT {
             left: m,
@@ -384,6 +521,22 @@ unsafe fn layout_edit(hwnd: HWND, state: &AppState) {
             1,
         )
     };
+    for (control, rect) in [
+        (state.proxy_toggle, layout.proxy_toggle),
+        (state.copy_toggle, layout.copy_toggle),
+        (state.hosted_field, layout.hosted_field),
+    ] {
+        unsafe {
+            MoveWindow(
+                control,
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                1,
+            );
+        }
+    }
 }
 
 unsafe fn create_ui(hwnd: HWND, state: &mut AppState) {
@@ -406,6 +559,76 @@ unsafe fn create_ui(hwnd: HWND, state: &mut AppState) {
         )
     };
     state.edit_brush = unsafe { CreateSolidBrush(SURFACE) };
+    for (target, id, text) in [
+        (
+            &mut state.proxy_toggle,
+            ID_AUTO_PROXY,
+            "첫 번째 영상 자동 프록싱",
+        ),
+        (
+            &mut state.copy_toggle,
+            ID_AUTO_COPY,
+            "첫 번째 링크 자동 복사",
+        ),
+    ] {
+        *target = unsafe {
+            CreateWindowExW(
+                0,
+                wide("BUTTON").as_ptr(),
+                wide(text).as_ptr(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX as u32,
+                0,
+                0,
+                10,
+                10,
+                hwnd,
+                id as HMENU,
+                GetModuleHandleW(null()),
+                null(),
+            )
+        };
+        unsafe {
+            SetWindowSubclass(*target, Some(toggle_subclass_proc), 1, 0);
+        }
+    }
+    state.hosted_field = unsafe {
+        CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            wide(HOSTED_HINT).as_ptr(),
+            WS_CHILD
+                | WS_VISIBLE
+                | WS_TABSTOP
+                | WS_BORDER
+                | ES_AUTOHSCROLL as u32
+                | ES_READONLY as u32,
+            0,
+            0,
+            10,
+            10,
+            hwnd,
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        )
+    };
+    unsafe {
+        SendMessageW(
+            state.hosted_field,
+            EM_SETCUEBANNER,
+            1,
+            wide("프록싱 준비 후 여기에 중계 링크가 표시됩니다.").as_ptr() as isize,
+        );
+    }
+    let hwnd_value = hwnd as isize;
+    state.relay = Some(RelayHost::new(move |generation, event| {
+        let raw = Box::into_raw(Box::new(HostingMessage { generation, event }));
+        if unsafe { PostMessageW(hwnd_value as HWND, WM_HOSTING_EVENT, 0, raw as isize) } == 0 {
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
+        }
+    }));
     unsafe {
         SetWindowSubclass(state.query, Some(edit_subclass_proc), 1, 0);
         SendMessageW(
@@ -541,7 +764,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
     unsafe {
         draw_text(
             memory_dc,
-            "원하는 노래, 바로 복사.",
+            "원하는 노래, 링크로 연결.",
             title_rect,
             TEXT,
             state.font_title,
@@ -582,7 +805,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
             if state.loading {
                 "검색 중…"
             } else {
-                "검색하고 자동복사"
+                "영상 검색"
             },
             true,
             !state.loading,
@@ -596,6 +819,16 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
             "한글발음 영상",
             state.mode == SearchMode::Pronunciation,
             true,
+            dpi,
+        );
+        draw_button(
+            memory_dc,
+            state,
+            layout.copy_hosted,
+            HitZone::CopyHosted,
+            "중계 링크 복사",
+            false,
+            state.hosted.is_some() && !state.hosting,
             dpi,
         );
         draw_button(
@@ -806,6 +1039,8 @@ fn hit_test(hwnd: HWND, state: &AppState, x: i32, y: i32) -> HitZone {
         HitZone::Copy
     } else if point_in(&layout.open, x, y) {
         HitZone::Open
+    } else if point_in(&layout.copy_hosted, x, y) {
+        HitZone::CopyHosted
     } else {
         layout
             .results
@@ -903,6 +1138,13 @@ unsafe fn start_search(hwnd: HWND, state: &mut AppState) {
         return;
     }
     state.loading = true;
+    if state.hosting {
+        if let Some(relay) = &state.relay {
+            relay.stop();
+        }
+        state.hosting = false;
+        state.hosting_generation = 0;
+    }
     state.results.clear();
     state.selected = 0;
     state.scroll = 0;
@@ -958,9 +1200,9 @@ unsafe fn finish_search(hwnd: HWND, state: &mut AppState, outcome: SearchOutcome
                 .filter(|result| !result.is_recommendation)
                 .count();
             let recommendation_count = state.results.len() - exact_count;
-            let copied =
-                exact_count > 0 && unsafe { copy_to_clipboard(hwnd, &state.results[0].url) };
-            if exact_count == 0 {
+            let copied = state.after_search == AfterSearch::Copy
+                && unsafe { copy_to_clipboard(hwnd, &state.results[0].url) };
+            if exact_count == 0 && !copied {
                 let kind = if state.mode == SearchMode::Karaoke {
                     "정확한 노래방 영상"
                 } else {
@@ -997,9 +1239,125 @@ unsafe fn finish_search(hwnd: HWND, state: &mut AppState, outcome: SearchOutcome
                     )
                 };
             }
+            if state.after_search == AfterSearch::Proxy {
+                unsafe {
+                    start_hosting(hwnd, state);
+                }
+            } else if state.after_search == AfterSearch::Copy && !copied {
+                unsafe {
+                    set_status(
+                        hwnd,
+                        state,
+                        "검색 완료 · 자동 복사 실패. 선택 링크 복사로 다시 시도하세요.",
+                        StatusTone::Error,
+                    );
+                }
+            }
         }
     }
     unsafe { InvalidateRect(hwnd, null(), 0) };
+}
+
+unsafe fn start_hosting(hwnd: HWND, state: &mut AppState) {
+    let Some(result) = state.results.first() else {
+        return;
+    };
+    let Some(relay) = &state.relay else {
+        return;
+    };
+    state.hosting_generation = relay.prepare(result.url.clone());
+    state.hosting = true;
+    state.hosted = None;
+    unsafe {
+        SetWindowTextW(state.hosted_field, wide("중계 준비 중…").as_ptr());
+        set_status(
+            hwnd,
+            state,
+            "첫 번째 영상의 중계를 준비하고 있습니다…",
+            StatusTone::Normal,
+        );
+    }
+}
+
+unsafe fn toggle_after_search(hwnd: HWND, state: &mut AppState, selected: AfterSearch) {
+    let previous = state.after_search;
+    state.after_search = previous.toggle(selected);
+    unsafe {
+        SendMessageW(
+            state.proxy_toggle,
+            BM_SETCHECK,
+            usize::from(state.after_search == AfterSearch::Proxy),
+            0,
+        );
+        SendMessageW(
+            state.copy_toggle,
+            BM_SETCHECK,
+            usize::from(state.after_search == AfterSearch::Copy),
+            0,
+        );
+    }
+    if previous == AfterSearch::Proxy {
+        if let Some(relay) = &state.relay {
+            relay.stop();
+        }
+        state.hosting_generation = 0;
+        state.hosting = false;
+        state.hosted = None;
+        unsafe {
+            SetWindowTextW(state.hosted_field, wide(HOSTED_HINT).as_ptr());
+        }
+    }
+    let message = match state.after_search {
+        AfterSearch::None => "자동 동작 꺼짐 · 검색 결과에서 직접 링크를 복사할 수 있습니다.",
+        AfterSearch::Copy => "자동 복사 켜짐 · 다음 검색부터 첫 번째 YouTube 링크를 복사합니다.",
+        AfterSearch::Proxy => {
+            "자동 프록싱 켜짐 · 다음 검색부터 첫 영상을 준비합니다. 끄면 중계가 종료됩니다."
+        }
+    };
+    unsafe {
+        set_status(hwnd, state, message, StatusTone::Normal);
+    }
+}
+
+unsafe fn hosting_event(hwnd: HWND, state: &mut AppState, message: HostingMessage) {
+    if message.generation != state.hosting_generation || state.after_search != AfterSearch::Proxy {
+        return;
+    }
+    match message.event {
+        HostingEvent::Progress(text) => unsafe {
+            set_status(hwnd, state, text, StatusTone::Normal);
+        },
+        HostingEvent::Ready { source, url } => {
+            state.hosting = false;
+            unsafe {
+                SetWindowTextW(state.hosted_field, wide(&url).as_ptr());
+            }
+            state.hosted = Some((source, url));
+            unsafe {
+                set_status(
+                    hwnd,
+                    state,
+                    "중계 준비 완료 · 중계 링크를 복사해 VRChat에 넣으세요. 앱을 켜 두세요.",
+                    StatusTone::Success,
+                );
+            }
+        }
+        HostingEvent::Failed(error) => {
+            state.hosting = false;
+            unsafe {
+                SetWindowTextW(
+                    state.hosted_field,
+                    wide("중계 실패 · 아래 상태 메시지를 확인하고 다시 검색하세요.").as_ptr(),
+                );
+                set_status(
+                    hwnd,
+                    state,
+                    format!("프록싱 실패 · {error}"),
+                    StatusTone::Error,
+                );
+            }
+        }
+    }
 }
 
 unsafe fn ime_composing(edit: HWND) -> bool {
@@ -1025,6 +1383,27 @@ unsafe fn activate_zone(hwnd: HWND, state: &mut AppState, zone: HitZone, double_
         }
         HitZone::Copy => unsafe { copy_selected(hwnd, state) },
         HitZone::Open => unsafe { open_selected(state) },
+        HitZone::CopyHosted if !state.hosting => {
+            if let Some((_, url)) = &state.hosted {
+                let copied = unsafe { copy_to_clipboard(hwnd, url) };
+                unsafe {
+                    set_status(
+                        hwnd,
+                        state,
+                        if copied {
+                            "중계 링크를 복사했습니다. 앱을 켜 두고 VRChat에서 재생하세요."
+                        } else {
+                            "복사 실패 · 중계 주소 입력창에서 직접 복사하세요."
+                        },
+                        if copied {
+                            StatusTone::Success
+                        } else {
+                            StatusTone::Error
+                        },
+                    );
+                }
+            }
+        }
         HitZone::Result(index) if index < state.results.len() => {
             state.selected = index;
             unsafe { InvalidateRect(hwnd, null(), 0) };
@@ -1057,9 +1436,10 @@ unsafe extern "system" fn window_proc(
         WM_GETMINMAXINFO => {
             let info = lparam as *mut MINMAXINFO;
             if !info.is_null() {
+                let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
                 unsafe {
-                    (*info).ptMinTrackSize.x = 900;
-                    (*info).ptMinTrackSize.y = 760;
+                    (*info).ptMinTrackSize.x = scale(900, dpi);
+                    (*info).ptMinTrackSize.y = scale(900, dpi);
                 }
             }
             0
@@ -1104,7 +1484,7 @@ unsafe extern "system" fn window_proc(
             }
         }
         WM_ERASEBKGND => 1,
-        WM_CTLCOLOREDIT => {
+        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
             if state.is_null() {
                 return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
             }
@@ -1187,9 +1567,36 @@ unsafe extern "system" fn window_proc(
             0
         }
         WM_SEARCH_DONE => {
-            if !state.is_null() && lparam != 0 {
+            if lparam != 0 {
                 let outcome = unsafe { *Box::from_raw(lparam as *mut SearchOutcome) };
-                unsafe { finish_search(hwnd, &mut *state, outcome) };
+                if !state.is_null() {
+                    unsafe { finish_search(hwnd, &mut *state, outcome) };
+                }
+            }
+            0
+        }
+        WM_COMMAND => {
+            if !state.is_null() && (wparam >> 16) == BN_CLICKED as usize {
+                match wparam & 0xffff {
+                    ID_AUTO_PROXY => unsafe {
+                        toggle_after_search(hwnd, &mut *state, AfterSearch::Proxy);
+                    },
+                    ID_AUTO_COPY => unsafe {
+                        toggle_after_search(hwnd, &mut *state, AfterSearch::Copy);
+                    },
+                    _ => {}
+                }
+            }
+            0
+        }
+        WM_HOSTING_EVENT => {
+            if lparam != 0 {
+                let message = unsafe { *Box::from_raw(lparam as *mut HostingMessage) };
+                if !state.is_null() {
+                    unsafe {
+                        hosting_event(hwnd, &mut *state, message);
+                    }
+                }
             }
             0
         }
@@ -1253,7 +1660,7 @@ fn main() {
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             1040,
-            820,
+            960,
             null_mut(),
             null_mut(),
             instance,
@@ -1307,6 +1714,9 @@ fn main() {
                 && !ime_composing((*current).query)
             {
                 PostMessageW(hwnd, WM_TRIGGER_SEARCH, 0, 0);
+                continue;
+            }
+            if IsDialogMessageW(hwnd, &message) != 0 {
                 continue;
             }
             TranslateMessage(&message);
