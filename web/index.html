@@ -35,6 +35,11 @@
             <label class="mode-option"><input type="radio" name="mode" value="pronunciation" checked><span class="mode-content"><span class="mode-number">A</span><span class="mode-copy"><strong>한글 발음</strong><small>발음 가사 · 한글 자막</small></span><span class="radio-indicator" aria-hidden="true"></span></span></label>
             <label class="mode-option"><input type="radio" name="mode" value="karaoke"><span class="mode-content"><span class="mode-number">B</span><span class="mode-copy"><strong>노래방 · 카라오케</strong><small>KY · TJ · 반주 영상</small></span><span class="radio-indicator" aria-hidden="true"></span></span></label>
           </div></fieldset>
+          <label class="auto-copy-option" for="auto-copy">
+            <span class="auto-copy-copy"><strong>첫 번째 링크 자동 복사</strong><small id="auto-copy-help">켜면 검색 완료 시 맨 위 결과의 링크를 복사해요.</small></span>
+            <input id="auto-copy" type="checkbox" role="switch" aria-describedby="auto-copy-help">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
         </form>
       </section>
       <section class="results-section" id="results-section" aria-labelledby="results-title">

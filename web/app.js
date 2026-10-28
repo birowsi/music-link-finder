@@ -9,6 +9,8 @@
   const count = document.querySelector('#result-count');
   const fallback = document.querySelector('#fallback');
   const fallbackUrl = document.querySelector('#fallback-url');
+  const autoCopy = document.querySelector('#auto-copy');
+  autoCopy.checked = false;
   let controller;
 
   function element(tag, className, text) {
@@ -86,6 +88,7 @@
     results.hidden = false;
     count.textContent = `총 ${videos.length}개`;
     count.hidden = false;
+    return { url: (exact[0] || recs[0]).url, button: results.querySelector('.video-actions button') };
   }
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -102,8 +105,10 @@
       const mode = new FormData(form).get('mode');
       const response = await fetch(`/api/search?${new URLSearchParams({ q: title, mode })}`, { signal: current.signal });
       const data = await response.json();
+      if (current.signal.aborted) return;
       if (!response.ok) throw new Error(data.error || '검색에 실패했습니다.');
-      render(data.results || []);
+      const first = render(data.results || []);
+      if (autoCopy.checked && first) await copyLink(first.url, first.button);
     } catch (error) {
       if (error.name !== 'AbortError') setStatus('검색에 문제가 생겼어요', error.message || '연결 상태를 확인하고 다시 시도해 주세요.', 'error');
     } finally {
