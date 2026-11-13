@@ -60,6 +60,39 @@ fn render_page(origin: &str) -> String {
         .replace('>', "&gt;");
     PAGE.replace("{{PUBLIC_ORIGIN}}", &escaped)
         .replace("{{SHARE_IMAGE_PATH}}", SHARE_IMAGE_PATH)
+        .replace("{{STYLESHEET_URL}}", &asset_path("style", "css", CSS))
+        .replace("{{SCRIPT_URL}}", &asset_path("app", "js", JS))
+}
+
+fn asset_path(name: &str, extension: &str, content: &str) -> String {
+    // Stable FNV-1a content fingerprint for cache identity, not security.
+    // Different contents get a different path even if a CDN ignores query strings.
+    let fingerprint = content
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    format!("/assets/{name}.{fingerprint:016x}.{extension}")
+}
+
+fn text_asset(
+    content: &'static str,
+    content_type: &'static str,
+    versioned: bool,
+) -> impl IntoResponse {
+    let cache = if versioned {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, cache),
+        ],
+        content,
+    )
 }
 
 #[derive(Deserialize)]
@@ -157,16 +190,16 @@ async fn robots() -> impl IntoResponse {
     )
 }
 async fn stylesheet() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], CSS)
+    text_asset(CSS, "text/css; charset=utf-8", false)
 }
 async fn script() -> impl IntoResponse {
-    (
-        [(
-            header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )],
-        JS,
-    )
+    text_asset(JS, "application/javascript; charset=utf-8", false)
+}
+async fn versioned_stylesheet() -> impl IntoResponse {
+    text_asset(CSS, "text/css; charset=utf-8", true)
+}
+async fn versioned_script() -> impl IntoResponse {
+    text_asset(JS, "application/javascript; charset=utf-8", true)
 }
 async fn regular_font() -> impl IntoResponse {
     (
@@ -209,6 +242,8 @@ async fn favicon() -> impl IntoResponse {
 fn router(page: String) -> Router {
     Router::new()
         .route("/", get(home))
+        .route(&asset_path("style", "css", CSS), get(versioned_stylesheet))
+        .route(&asset_path("app", "js", JS), get(versioned_script))
         .route("/style.css", get(stylesheet))
         .route("/app.js", get(script))
         .route("/favicon.ico", get(favicon))
@@ -250,6 +285,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_assets_get_new_paths_and_unchanged_assets_keep_the_same_path() {
+        let blue = asset_path("style", "css", ":root { --accent: blue; }");
+        let pink = asset_path("style", "css", ":root { --accent: pink; }");
+        assert_ne!(blue, pink);
+        assert_eq!(
+            pink,
+            asset_path("style", "css", ":root { --accent: pink; }")
+        );
+        assert!(pink.starts_with("/assets/style."));
+        assert!(pink.ends_with(".css"));
+        assert!(!pink.contains('?'));
+    }
 
     #[test]
     fn canonical_origin_uses_custom_domain_then_render_then_local_port() {
@@ -368,9 +417,58 @@ mod tests {
                 assert!(!meta[key].is_empty());
             }
             assert!(html.contains(&format!(r#"<link rel="canonical" href="{origin}/">"#)));
+            assert!(html.contains(&format!(
+                r#"<link rel="stylesheet" href="{}">"#,
+                asset_path("style", "css", CSS)
+            )));
+            assert!(html.contains(&format!(
+                r#"<script defer src="{}"></script>"#,
+                asset_path("app", "js", JS)
+            )));
             assert!(!html.contains("{{"));
             assert!(!html.contains("untrusted.example"));
         }
+        for (path, content, content_type, cache) in [
+            (
+                "/style.css".to_owned(),
+                CSS,
+                "text/css; charset=utf-8",
+                "no-cache",
+            ),
+            (
+                "/app.js".to_owned(),
+                JS,
+                "application/javascript; charset=utf-8",
+                "no-cache",
+            ),
+            (
+                asset_path("style", "css", CSS),
+                CSS,
+                "text/css; charset=utf-8",
+                "public, max-age=31536000, immutable",
+            ),
+            (
+                asset_path("app", "js", JS),
+                JS,
+                "application/javascript; charset=utf-8",
+                "public, max-age=31536000, immutable",
+            ),
+        ] {
+            let response = client.get(format!("{base}{path}")).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["content-type"], content_type);
+            assert_eq!(response.headers()["cache-control"], cache);
+            assert_eq!(response.text().await.unwrap(), content);
+        }
+        assert_eq!(
+            client
+                .get(format!("{base}/assets/style.0000000000000000.css"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
         let url = format!("{base}{SHARE_IMAGE_PATH}");
         let response = client
             .get(&url)
