@@ -2,15 +2,25 @@
 @font-face {font-family:"UtaLink Sans";src:url("/fonts/pretendard-jp-semibold-v1.3.9.woff2") format("woff2");font-style:normal;font-weight:600 800;font-display:swap}
 :root {
   color-scheme:light;
-  --ink:#1a283d;
-  --muted:#63738a;
-  --line:#dfe6f0;
-  --blue:#315ce5;
-  --selected:#ebf2ff;
-  --surface:#f4f7fc;
+  --ink:#3d3340;
+  --muted:#7d6878;
+  --line:#e9d8e1;
+  --accent:#e5a0bb;
+  --accent-hover:#d889aa;
+  --accent-text:#a5436d;
+  --on-accent:#422b3a;
+  --focus:#cf789b;
+  --selected:#f8dfe9;
+  --selected-border:#d88baa;
+  --background:#fff7fa;
+  --surface:#fffcfd;
+  --surface-hover:#fbeaf0;
+  --preview:#f3eaf1;
+  --skeleton:#f3e6ee;
+  --skeleton-light:#faf0f5;
   font-family:"UtaLink Sans","Segoe UI","Malgun Gothic",Meiryo,sans-serif;
   color:var(--ink);
-  background:#fff;
+  background:var(--background);
   font-synthesis:none}
 * {
   box-sizing:border-box}
@@ -23,7 +33,7 @@ button,input {
 button,a,input {
   outline-offset:4px}
 button:focus-visible,a:focus-visible,input:focus-visible {
-  outline:2px solid var(--blue)}
+  outline:2px solid var(--accent-text)}
 button {
   cursor:pointer}
 button:disabled {
@@ -45,7 +55,8 @@ button:disabled {
   position:fixed;
   top:-80px;
   left:24px;
-  background:white;
+  background:var(--surface);
+  color:var(--accent-text);
   z-index:9;
   padding:12px}
 .skip-link:focus {
@@ -90,13 +101,13 @@ button:disabled {
   padding:calc((var(--query-height) - var(--query-line-height) - 2px) / 2) 18px;
   line-height:var(--query-line-height);
   font-size:17px;
-  background:#fff;
+  background:var(--surface);
   color:var(--ink)}
 .search-row input:focus {
-  border-color:var(--blue)}
+  border-color:var(--focus)}
 .search-button,.selected-copy {
-  background:var(--blue);
-  color:white;
+  background:var(--accent);
+  color:var(--on-accent);
   border:0;
   border-radius:6px;
   font-weight:650}
@@ -137,10 +148,10 @@ button:disabled {
   color:var(--muted);
   border-bottom:3px solid transparent}
 .mode-option input:checked+span {
-  border-color:var(--blue);
-  color:var(--blue)}
+  border-color:var(--accent);
+  color:var(--accent-text)}
 .mode-option input:focus-visible+span {
-  outline:2px solid var(--blue);
+  outline:2px solid var(--accent-text);
   outline-offset:2px}
 .auto-copy-option {
   display:flex;
@@ -150,7 +161,7 @@ button:disabled {
   color:var(--muted);
   cursor:pointer}
 .auto-copy-option input {
-  accent-color:var(--blue);
+  accent-color:var(--accent);
   width:15px;
   height:15px}
 .switch-track {
@@ -190,19 +201,19 @@ button:disabled {
   width:100%;
   border:1px solid transparent;
   border-radius:7px;
-  background:white;
+  background:var(--surface);
   color:var(--ink);
   min-height:102px}
 .video-card:hover {
-  background:var(--surface)}
+  background:var(--surface-hover)}
 .video-card.is-selected {
   background:var(--selected);
-  border-color:#aac5f5}
+  border-color:var(--selected-border)}
 .row-preview {
   width:128px;
   aspect-ratio:16/9;
   flex-shrink:0;
-  background:#f0f3f8;
+  background:var(--preview);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -252,7 +263,7 @@ button:disabled {
 .preview {
   width:100%;
   aspect-ratio:16/9;
-  background:#f0f3f8;
+  background:var(--preview);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -266,7 +277,7 @@ button:disabled {
   color:var(--muted)}
 .selected-kind {
   font-size:12px;
-  color:var(--blue);
+  color:var(--accent-text);
   margin:18px 0 8px;
   min-height:18px}
 .selected-info h2 {
@@ -299,9 +310,9 @@ button:disabled {
   color:var(--ink);
   font-size:13px}
 .selected-copy:hover:not(:disabled),.search-button:hover:not(:disabled) {
-  background:#224abe}
+  background:var(--accent-hover)}
 .selected-open:hover {
-  background:var(--surface)}
+  background:var(--surface-hover)}
 .desktop-note {
   font-size:12px;
   color:var(--muted);
@@ -347,11 +358,11 @@ button:disabled {
   gap:16px;
   height:72px}
 .skeleton-row span {
-  background:#f0f3f8}
+  background:var(--skeleton)}
 .skeleton-row span:last-child {
   height:40px;
   margin-top:4px;
-  background:linear-gradient(#f0f3f8 0 14px,transparent 14px 26px,#f6f8fb 26px)}
+  background:linear-gradient(var(--skeleton) 0 14px,transparent 14px 26px,var(--skeleton-light) 26px)}
 .fallback {
   padding:20px;
   border:1px solid var(--line);
@@ -371,12 +382,15 @@ button:disabled {
   min-width:0;
   width:100%;
   border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--ink);
   padding:10px;
   border-radius:4px}
 .fallback button {
   flex-shrink:0;
   border:1px solid var(--line);
-  background:white;
+  background:var(--surface);
+  color:var(--ink);
   border-radius:4px;
   font-size:12px}
 footer {
@@ -461,8 +475,8 @@ footer {
   padding:12px 18px max(14px,env(safe-area-inset-bottom));
   border-left:0;
   border-top:1px solid var(--line);
-  background:#fff;
-  box-shadow:0 -3px 20px #1a283d09}
+  background:var(--surface);
+  box-shadow:0 -3px 20px #3d334009}
 .selection-panel .preview,.selected-kind,.desktop-note,.selected-info>p:last-child {
   display:none}
 .selected-info h2 {
@@ -507,7 +521,7 @@ footer {
 /* State changes keep their position; only color and opacity transition. */
 .video-card {transition:background-color 140ms ease-out,border-color 140ms ease-out}
 .selected-copy,.selected-open,.search-button,.mode-option span {transition:background-color 120ms ease-out,border-color 120ms ease-out,color 120ms ease-out}
-.selected-copy:active:not(:disabled),.search-button:active:not(:disabled) {background:#1b3ea7}
+.selected-copy:active:not(:disabled),.search-button:active:not(:disabled) {background:var(--accent-hover)}
 .results:not([hidden]) {animation:results-in 150ms ease-out both}
 @keyframes results-in {from {opacity:.35} to {opacity:1}}
 @media(prefers-reduced-motion:reduce) {*,*::before,*::after {animation:none!important;transition:none!important;scroll-behavior:auto!important}}

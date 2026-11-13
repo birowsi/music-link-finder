@@ -217,15 +217,25 @@ const fn rgb(red: u32, green: u32, blue: u32) -> u32 {
     red | (green << 8) | (blue << 16)
 }
 
-const BG: u32 = rgb(255, 255, 255);
-const SURFACE: u32 = rgb(255, 255, 255);
-const SURFACE_HOVER: u32 = rgb(244, 247, 252);
-const SURFACE_SELECTED: u32 = rgb(235, 242, 255);
-const BORDER: u32 = rgb(223, 230, 240);
-const SEARCH_FOCUS: u32 = rgb(52, 91, 221);
-const TEXT: u32 = rgb(26, 40, 61);
-const TEXT_MUTED: u32 = rgb(75, 91, 113);
-const ACCENT: u32 = rgb(49, 92, 229);
+// Koharu-inspired rose palette; matching web tokens live in web/style.css.
+const BG: u32 = rgb(255, 247, 250);
+const SURFACE: u32 = rgb(255, 252, 253);
+const SURFACE_HOVER: u32 = rgb(251, 234, 240);
+const SURFACE_SELECTED: u32 = rgb(248, 223, 233);
+const BORDER: u32 = rgb(233, 216, 225);
+const SEARCH_FOCUS: u32 = rgb(207, 120, 155);
+const TEXT: u32 = rgb(61, 51, 64);
+const TEXT_MUTED: u32 = rgb(125, 104, 120);
+const ACCENT: u32 = rgb(229, 160, 187);
+const ACCENT_HOVER: u32 = rgb(216, 137, 170);
+const ACCENT_TEXT: u32 = rgb(165, 67, 109);
+const ON_ACCENT: u32 = rgb(66, 43, 58);
+const SELECTION_BORDER: u32 = rgb(216, 139, 170);
+const PREVIEW_BG: u32 = rgb(243, 234, 241);
+const SKELETON: u32 = rgb(243, 230, 238);
+const SKELETON_LIGHT: u32 = rgb(250, 240, 245);
+const CONTROL_DISABLED: u32 = rgb(241, 232, 237);
+const TEXT_DISABLED: u32 = rgb(163, 140, 156);
 const SUCCESS: u32 = rgb(51, 108, 77);
 const ERROR: u32 = rgb(177, 58, 40);
 
@@ -655,8 +665,8 @@ unsafe extern "system" fn toggle_subclass_proc(
             rounded_box(
                 graphics,
                 track,
-                if checked { TEXT } else { BORDER },
-                if checked { TEXT } else { BORDER },
+                if checked { ACCENT } else { BORDER },
+                if checked { ACCENT } else { BORDER },
                 track_h / 2,
             );
             rounded_box(graphics, knob, SURFACE, SURFACE, knob_size / 2);
@@ -1231,7 +1241,7 @@ unsafe fn draw_custom_button(
                 hdc,
                 label,
                 rect,
-                if active { ACCENT } else { TEXT_MUTED },
+                if active { ACCENT_TEXT } else { TEXT_MUTED },
                 state.font_button,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
@@ -1250,14 +1260,14 @@ unsafe fn draw_custom_button(
         }
         let (base, highlight, outline, color) = if !enabled {
             (
-                rgb(237, 241, 246),
-                rgb(237, 241, 246),
-                rgb(237, 241, 246),
-                rgb(147, 157, 172),
+                CONTROL_DISABLED,
+                CONTROL_DISABLED,
+                CONTROL_DISABLED,
+                TEXT_DISABLED,
             )
         } else {
             match style {
-                ButtonStyle::Primary => (ACCENT, rgb(34, 74, 190), ACCENT, SURFACE),
+                ButtonStyle::Primary => (ACCENT, ACCENT_HOVER, ACCENT, ON_ACCENT),
                 ButtonStyle::Secondary => (SURFACE, SURFACE_HOVER, BORDER, TEXT),
                 ButtonStyle::DangerSubtle => (BG, rgb(245, 228, 221), BG, ERROR),
                 ButtonStyle::SegmentTab(_) => unreachable!(),
@@ -1405,7 +1415,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
             );
         }
         let thumbnail = |rect: RECT, url: Option<&str>| {
-            fill_rect(dc, rect, rgb(240, 243, 248));
+            fill_rect(dc, rect, PREVIEW_BG);
             if let Some(image) = url.and_then(|url| state.thumbnails.get(url)) {
                 image.paint(
                     graphics,
@@ -1437,7 +1447,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                     fill_rect(
                         dc,
                         r(row.left + s(10), top, row.left + s(130), top + s(68)),
-                        rgb(239, 243, 248),
+                        SKELETON,
                     );
                     fill_rect(
                         dc,
@@ -1447,7 +1457,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                             row.right - s(28 + i as i32 * 12),
                             top + s(18),
                         ),
-                        rgb(239, 243, 248),
+                        SKELETON,
                     );
                     fill_rect(
                         dc,
@@ -1457,7 +1467,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                             row.right - s(80),
                             top + s(42),
                         ),
-                        rgb(246, 248, 251),
+                        SKELETON_LIGHT,
                     );
                     fill_rect(
                         dc,
@@ -1467,7 +1477,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                             row.left + s(260),
                             top + s(64),
                         ),
-                        rgb(246, 248, 251),
+                        SKELETON_LIGHT,
                     );
                 }
             } else {
@@ -1503,7 +1513,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                 graphics,
                 row,
                 fill,
-                if selected { rgb(170, 197, 245) } else { fill },
+                if selected { SELECTION_BORDER } else { fill },
                 s(6),
                 i32::from(selected),
             );
