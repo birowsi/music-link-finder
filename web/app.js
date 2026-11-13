@@ -17,7 +17,6 @@
   const selectedImage = document.querySelector('#selected-image');
   const previewPlaceholder = document.querySelector('#preview-placeholder');
   const selectedKind = document.querySelector('#selected-kind');
-  let activeMode = 'pronunciation';
   let selectedVideo;
   let copySequence = 0;
   autoCopy.checked = false;
@@ -106,7 +105,9 @@
     return id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : '';
   }
   function videoKind(video) {
-    return video.is_fallback ? '일반 결과' : video.is_recommendation ? '관련 추천' : activeMode === 'karaoke' ? '노래방 반주' : '한글 발음';
+    if (video.is_fallback) return '일반 결과';
+    if (video.is_recommendation) return video.kind === 'subtitle' ? '관련 추천 · 자막' : '관련 추천';
+    return { pronunciation: '한글 발음', subtitle: '자막', karaoke: '노래방 반주' }[video.kind] || '일반 결과';
   }
   function group(label, items) {
     if (!items.length) return;
@@ -117,7 +118,8 @@
       const preview=element('span','row-preview');preview.append(image);
       image.addEventListener('error',()=>{image.hidden=true;preview.append(element('span','image-failed','미리보기 없음'));},{once:true});
       const main=element('span','video-main');
-      main.append(element('span','video-title',video.title),element('span','video-channel',`${videoKind(video)}  |  ${video.channel}`));
+      const metadata=element('span','video-channel');metadata.textContent=`${videoKind(video)}  |  ${displayText(video.channel)}`;
+      main.append(element('span','video-title',video.title),metadata);
       card.append(preview,main);card.addEventListener('click',()=>selectVideo(video,card));
       card.addEventListener('keydown',event=>{if(!['ArrowDown','ArrowUp'].includes(event.key))return;const cards=[...results.querySelectorAll('.video-card')];const next=cards[cards.indexOf(card)+(event.key==='ArrowDown'?1:-1)];if(next){event.preventDefault();next.focus();next.click();}});
       results.append(card);
@@ -132,15 +134,16 @@
     const exact = videos.filter(item => !item.is_recommendation && !item.is_fallback);
     const general = videos.filter(item => item.is_fallback);
     const recs = videos.filter(item => item.is_recommendation);
-    group('곡명 일치 결과', exact, false);
     group('일반 YouTube 결과', general, false);
+    group('곡명 일치 결과', exact, false);
     group('함께 찾아볼 추천 영상', recs, true);
     status.hidden = true;
     results.hidden = false;
     count.textContent = `총 ${videos.length}개`;
     count.hidden = false;
-    selectVideo(exact[0] || general[0] || recs[0], results.querySelector('.video-card'));
-    return { url: (exact[0] || general[0] || recs[0]).url, button: selectedCopy };
+    const first = general[0] || exact[0] || recs[0];
+    selectVideo(first, results.querySelector('.video-card'));
+    return { url: first.url, button: selectedCopy };
   }
   form.querySelectorAll('[name=mode]').forEach(input => input.addEventListener('change', () => {
     controller?.abort();
@@ -154,8 +157,13 @@
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const title = query.value.trim();
-    if (!title) { query.focus(); setStatus('곡명을 입력하세요', '', 'error'); return; }
     controller?.abort();
+    controller = null;
+    if (!title) {
+      button.disabled = false;
+      buttonText.textContent = '검색';
+      query.focus(); setStatus('곡명을 입력하세요', '', 'error'); return;
+    }
     controller = new AbortController();
     const current = controller;
     button.disabled = true;
@@ -164,7 +172,6 @@
     setStatus('검색 중', '', 'loading');
     try {
       const mode = new FormData(form).get('mode');
-      activeMode=mode;
       const response = await fetch(`/api/search?${new URLSearchParams({ q: title, mode })}`, { signal: current.signal });
       const data = await response.json();
       if (controller !== current || current.signal.aborted) return;

@@ -259,6 +259,7 @@ const NUM_ZONES: usize = 9 + MAX_VISIBLE_RESULTS;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HitZone {
     None,
+    Query,
     Search,
     Pronunciation,
     Karaoke,
@@ -386,6 +387,7 @@ struct AppState {
     font_small: HFONT,
     font_badge: HFONT,
     font_title: HFONT,
+    font_credit: HFONT,
     edit_brush: HBRUSH,
     results: Vec<VideoResult>,
     selected: usize,
@@ -428,6 +430,7 @@ impl AppState {
             font_small: null_mut(),
             font_badge: null_mut(),
             font_title: null_mut(),
+            font_credit: null_mut(),
             edit_brush: null_mut(),
             results: Vec::new(),
             selected: 0,
@@ -690,7 +693,13 @@ unsafe fn set_status(hwnd: HWND, state: &mut AppState, text: impl Into<String>, 
 }
 
 unsafe fn create_font(size: i32, weight: i32, dpi: i32) -> HFONT {
-    let face = wide(if FONT_READY.load(Ordering::Relaxed) {
+    unsafe { create_font_style(size, weight, dpi, false) }
+}
+
+unsafe fn create_font_style(size: i32, weight: i32, dpi: i32, italic: bool) -> HFONT {
+    let face = wide(if italic {
+        "Georgia"
+    } else if FONT_READY.load(Ordering::Relaxed) {
         if weight >= FW_SEMIBOLD as i32 {
             "Pretendard JP SemiBold"
         } else {
@@ -706,7 +715,7 @@ unsafe fn create_font(size: i32, weight: i32, dpi: i32) -> HFONT {
             0,
             0,
             weight,
-            0,
+            u32::from(italic),
             0,
             0,
             DEFAULT_CHARSET as u32,
@@ -733,6 +742,7 @@ unsafe fn replace_fonts(hwnd: HWND, state: &mut AppState) {
         delete_font(state.font_small);
         delete_font(state.font_badge);
         delete_font(state.font_title);
+        delete_font(state.font_credit);
     }
     let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     state.font_title = unsafe { create_font(25, FW_SEMIBOLD as i32, dpi) };
@@ -741,6 +751,7 @@ unsafe fn replace_fonts(hwnd: HWND, state: &mut AppState) {
     state.font_button = unsafe { create_font(15, FW_SEMIBOLD as i32, dpi) };
     state.font_small = unsafe { create_font(15, FW_NORMAL as i32, dpi) };
     state.font_badge = unsafe { create_font(13, FW_SEMIBOLD as i32, dpi) };
+    state.font_credit = unsafe { create_font_style(14, FW_NORMAL as i32, dpi, true) };
 
     if !state.query.is_null() {
         unsafe { SendMessageW(state.query, WM_SETFONT, state.font_body as usize, 1) };
@@ -958,14 +969,30 @@ unsafe fn layout_edit(hwnd: HWND, state: &AppState) {
     let layout = make_layout(hwnd);
     let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     let px = scale(16, dpi);
-    let py = scale(12, dpi);
+    // A single-line EDIT paints at the top of its client area. Center a
+    // font-sized control inside the search shell instead of using fixed padding.
+    let mut line_height = scale(20, dpi);
+    unsafe {
+        let dc = GetDC(state.query);
+        if !dc.is_null() {
+            let previous = SelectObject(dc, state.font_body.cast());
+            let mut metrics: TEXTMETRICW = zeroed();
+            if GetTextMetricsW(dc, &mut metrics) != 0 {
+                line_height = metrics.tmHeight;
+            }
+            SelectObject(dc, previous);
+            ReleaseDC(state.query, dc);
+        }
+    }
+    let shell_height = layout.query_shell.bottom - layout.query_shell.top;
+    let edit_height = (line_height + scale(2, dpi)).min(shell_height);
     unsafe {
         MoveWindow(
             state.query,
             layout.query_shell.left + px,
-            layout.query_shell.top + py,
+            layout.query_shell.top + (shell_height - edit_height) / 2,
             layout.query_shell.right - layout.query_shell.left - px * 2,
-            layout.query_shell.bottom - layout.query_shell.top - py * 2,
+            edit_height,
             1,
         );
         MoveWindow(
@@ -1501,15 +1528,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                 state.font_card_title,
                 multiline,
             );
-            let kind = if item.is_fallback {
-                "일반 결과"
-            } else if item.is_recommendation {
-                "관련 추천"
-            } else if state.mode == SearchMode::Pronunciation {
-                "한글 발음"
-            } else {
-                "노래방 반주"
-            };
+            let kind = item.kind_label();
             draw_text(
                 dc,
                 &format!("{}  |  {}", kind, item.channel),
@@ -1673,7 +1692,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
             dc,
             &state.status,
             RECT {
-                right: layout.status.right - s(120),
+                right: layout.status.right - s(230),
                 ..layout.status
             },
             color,
@@ -1693,9 +1712,23 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
         draw_text(
             dc,
             &position,
-            layout.status,
+            RECT {
+                right: layout.status.right - s(104),
+                ..layout.status
+            },
             TEXT_MUTED,
             state.font_small,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
+        draw_text(
+            dc,
+            "by hanbi.",
+            RECT {
+                left: layout.status.right - s(90),
+                ..layout.status
+            },
+            TEXT_MUTED,
+            state.font_credit,
             DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
         GdipDeleteGraphics(graphics);
@@ -1709,7 +1742,9 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
 
 fn hit_test(hwnd: HWND, state: &AppState, x: i32, y: i32) -> HitZone {
     let layout = make_layout(hwnd);
-    if point_in(&layout.search, x, y) {
+    if point_in(&layout.query_shell, x, y) {
+        HitZone::Query
+    } else if point_in(&layout.search, x, y) {
         HitZone::Search
     } else if point_in(&layout.pronunciation, x, y) {
         HitZone::Pronunciation
@@ -1821,7 +1856,11 @@ unsafe fn open_selected(hwnd: HWND, state: &mut AppState) {
             } else {
                 "YouTube를 열지 못했습니다. 기본 브라우저 설정을 확인하세요."
             },
-            if result as isize > 32 { StatusTone::Success } else { StatusTone::Error },
+            if result as isize > 32 {
+                StatusTone::Success
+            } else {
+                StatusTone::Error
+            },
         );
     }
 }
@@ -2085,6 +2124,9 @@ unsafe fn ime_composing(edit: HWND) -> bool {
 
 unsafe fn activate_zone(hwnd: HWND, state: &mut AppState, zone: HitZone, double_click: bool) {
     match zone {
+        HitZone::Query => unsafe {
+            SetFocus(state.query);
+        },
         HitZone::Search => unsafe { start_search(hwnd, state) },
         HitZone::Pronunciation | HitZone::Karaoke => {
             let mode = if zone == HitZone::Pronunciation {
@@ -2508,6 +2550,7 @@ unsafe extern "system" fn window_proc(
                     delete_font(owned.font_small);
                     delete_font(owned.font_badge);
                     delete_font(owned.font_title);
+                    delete_font(owned.font_credit);
                     if !owned.edit_brush.is_null() {
                         DeleteObject(owned.edit_brush as _);
                     }
@@ -2802,6 +2845,35 @@ mod input_tests {
     }
 
     #[test]
+    fn search_shell_padding_remains_an_input_target() {
+        unsafe {
+            let (window, mut state) = hidden_search_window("두근어질");
+            for (width, height) in [(800, 650), (1280, 900)] {
+                super::SetWindowPos(
+                    window.0,
+                    super::null_mut(),
+                    0,
+                    0,
+                    width,
+                    height,
+                    super::SWP_NOZORDER | super::SWP_NOACTIVATE,
+                );
+                let layout = super::make_layout(window.0);
+                let zone = super::hit_test(
+                    window.0,
+                    &state,
+                    layout.query_shell.left + 2,
+                    layout.query_shell.top + 2,
+                );
+                assert_ne!(zone, super::HitZone::None);
+                super::activate_zone(window.0, &mut state, zone, false);
+                assert_eq!(super::GetFocus(), state.query);
+                assert_eq!(super::get_text(state.query), "두근어질");
+            }
+        }
+    }
+
+    #[test]
     fn late_search_results_and_errors_cannot_replace_the_active_tab() {
         unsafe {
             let (window, mut state) = hidden_search_window("두근어질");
@@ -2816,6 +2888,7 @@ mod input_tests {
                 thumbnail_url: String::new(),
                 score: 0,
                 matched: Vec::new(),
+                kind: music_link_finder::search::VideoKind::Pronunciation,
                 is_recommendation: false,
                 is_fallback: false,
             };

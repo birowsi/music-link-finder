@@ -68,6 +68,7 @@ async fn search(Query(params): Query<SearchParams>) -> Response {
                 "title": item.title, "url": item.url, "channel": item.channel,
                 "thumbnail_url": item.thumbnail_url,
                 "score": item.score, "matched": item.matched,
+                "kind": item.kind,
                 "is_recommendation": item.is_recommendation,
                 "is_fallback": item.is_fallback
             })).collect::<Vec<_>>()

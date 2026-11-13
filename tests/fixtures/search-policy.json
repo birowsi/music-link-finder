@@ -1,0 +1,94 @@
+[
+  {
+    "name": "complete_song_name_required",
+    "query": "작은 사랑의 노래", "mode": "pronunciation",
+    "candidates": [
+      ["partial", "작은 사랑의 다른 노래 한글발음", "채널"],
+      ["live", "작은 사랑의 노래 LIVE 한글발음", "채널"],
+      ["studio", "작은 사랑의 노래 원곡 한글발음", "채널"]
+    ],
+    "general": [["general", "작은 사랑의 노래 MV", "채널"]],
+    "expected": [["studio", "pronunciation", false, false], ["live", "pronunciation", false, false]]
+  },
+  {
+    "name": "subtitle_does_not_suppress_general_fallback",
+    "query": "잇떼", "mode": "pronunciation",
+    "candidates": [
+      ["subtitle", "요루시카 言って 한글자막", "채널"],
+      ["related", "요루시카 다른 곡 한글발음", "채널"],
+      ["bareop", "요루시카 言って OP", "채널"]
+    ],
+    "general": [["subtitle", "요루시카 言って 한글자막", "채널"], ["mv", "요루시카 言って MV", "채널"]],
+    "expected": [["mv", "general", false, true], ["subtitle", "subtitle", false, false], ["related", "pronunciation", true, false]]
+  },
+  {
+    "name": "work_name_needs_descriptors_and_conflicts_are_not_direct",
+    "query": "주문토끼 2기 OP", "mode": "pronunciation",
+    "candidates": [
+      ["ending", "주문은 토끼입니까 2기 ED 한글발음", "채널"],
+      ["season1", "주문은 토끼입니까 1기 OP 한글발음", "채널"],
+      ["missing", "주문은 토끼입니까 OP 한글발음", "채널"],
+      ["bareop", "주문은 토끼입니까 2기 OP", "채널"],
+      ["song", "No Poi 한글발음", "채널"],
+      ["work", "주문은 토끼입니까 2기 OP 한글발음", "채널"]
+    ],
+    "general": [],
+    "expected": [["song", "pronunciation", false, false], ["work", "pronunciation", false, false], ["ending", "pronunciation", true, false], ["season1", "pronunciation", true, false], ["missing", "pronunciation", true, false]]
+  },
+  {
+    "name": "artist_context_requires_a_complete_registered_name",
+    "query": "아지캉 키미노마치마데", "mode": "pronunciation",
+    "candidates": [
+      ["partial", "ASIAN 다른 곡 한글발음", "채널"],
+      ["artist", "아지캉 다른 곡 한글발음", "채널"],
+      ["channel", "다른 곡 한글발음", "ASIAN KUNG-FU GENERATION"],
+      ["song", "君の街まで 한글발음", "채널"]
+    ],
+    "general": [],
+    "expected": [["song", "pronunciation", false, false], ["artist", "pronunciation", true, false], ["channel", "pronunciation", true, false]]
+  },
+  {
+    "name": "unregistered_work_queries_enforce_season_and_kind",
+    "query": "샘플 애니 시즌 3 ED", "mode": "pronunciation",
+    "candidates": [
+      ["season2", "샘플 애니 2기 ED 한글발음", "채널"],
+      ["opening", "샘플 애니 3기 OP 한글발음", "채널"],
+      ["missing", "샘플 애니 한글발음", "채널"],
+      ["correct", "샘플 애니 S3 ending 한글발음", "채널"],
+      ["unrelated", "다른 애니 3기 ED 한글발음", "채널"]
+    ],
+    "general": [],
+    "expected": [["correct", "pronunciation", false, false], ["season2", "pronunciation", true, false], ["opening", "pronunciation", true, false], ["missing", "pronunciation", true, false]]
+  },
+  {
+    "name": "karaoke_instrumental_is_valid_and_performance_is_lower",
+    "query": "잇떼", "mode": "karaoke",
+    "candidates": [
+      ["performance", "말해줘 노래방에서 불러보았다 한글발음 official", "채널"],
+      ["instrumental", "言って karaoke instrumental", "채널"],
+      ["domestic", "요루시카 말해줘 TJ karaoke", "채널"],
+      ["related", "요루시카 다른 곡 TJ karaoke", "채널"]
+    ],
+    "general": [],
+    "expected": [["domestic", "karaoke", false, false], ["instrumental", "karaoke", false, false], ["performance", "karaoke", false, false], ["related", "karaoke", true, false]]
+  },
+  {
+    "name": "type_before_source_then_studio_before_live",
+    "query": "잇떼", "mode": "pronunciation",
+    "candidates": [
+      ["subtitle", "말해줘 official 한글자막", "채널"],
+      ["live", "말해줘 LIVE official 한글발음", "채널"],
+      ["studio", "말해줘 한글발음", "채널"],
+      ["official", "말해줘 official 한글발음", "채널"]
+    ],
+    "general": [],
+    "expected": [["official", "pronunciation", false, false], ["studio", "pronunciation", false, false], ["live", "pronunciation", false, false], ["subtitle", "subtitle", false, false]]
+  },
+  {
+    "name": "one_character_titles_do_not_match_longer_words",
+    "query": "봄", "mode": "pronunciation",
+    "candidates": [["wrong", "봄날 한글발음", "채널"], ["song", "봄 한글발음", "채널"], ["subtitle", "봄 한글자막", "채널"]],
+    "general": [],
+    "expected": [["song", "pronunciation", false, false], ["subtitle", "subtitle", false, false]]
+  }
+]

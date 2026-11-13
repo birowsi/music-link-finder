@@ -18,4 +18,4 @@
 
 `Cargo.toml`, `Cargo.lock`, `build.rs`는 소스 빌드에 사용합니다. `Dockerfile`과 `render.yaml`은 웹 배포 설정입니다.
 
-[자세한 사용법과 빌드 방법](docs/manual.md) / [디자인 검토 기록](docs/design/README.md)
+[자세한 사용법과 빌드 방법](docs/manual.md) / [검색 판정 규칙](docs/search-policy.md) / [디자인 검토 기록](docs/design/README.md)
