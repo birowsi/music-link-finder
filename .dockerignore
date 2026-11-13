@@ -2,6 +2,11 @@
 .gitignore
 target
 MusicLinkFinder.exe
-run.bat
-icon.jpg
+UtaLink.exe
+tools
+.relay-cache
+config.txt
+window-state.txt
+log_run.txt
 README.md
+docs

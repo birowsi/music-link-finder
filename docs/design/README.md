@@ -1,0 +1,57 @@
+# UtaLink 화면 재설계
+
+## 구현 전 문제와 우선순위
+
+1. 썸네일이 없어 비슷한 제목의 영상을 구별하기 어려웠습니다.
+2. 긴 한국어와 일본어 제목을 읽는 공간보다 장식과 빈 공간이 컸습니다.
+3. 복사와 중계의 강조가 비슷하고 목록마다 조작이 반복됐습니다.
+4. 작은 창과 큰 창의 정보 밀도, 로딩과 오류 표현이 일관되지 않았습니다.
+
+## 구현 전에 비교한 구조
+
+| 시안 | 구조와 적용한 레퍼런스 | 판단 |
+| --- | --- | --- |
+| A 비교 중심 | Raycast의 검색 후 선택 흐름과 Cider의 이미지, 곡명, 아티스트 배치. 왼쪽 썸네일 목록, 오른쪽 선택 영상과 동작 | 채택. 긴 제목을 비교하면서 선택 영상의 복사와 중계를 유지할 수 있습니다. |
+| B 썸네일 그리드 | Cider의 이미지 중심 미디어 탐색. 3열 그리드와 하단 조작 영역 | 긴 제목에서 행 높이가 늘고 선택한 영상의 동작까지 시선 이동이 컸습니다. |
+| C 빠른 검색 | Raycast의 작은 검색 목록과 하단 동작 | 빠른 복사는 쉽지만 상세 제목과 지속되는 중계 상태를 담을 공간이 부족했습니다. |
+
+실제 검색 결과를 넣은 [세 시안](concepts.html)에서 구조와 로딩, 일반 검색 대체, 오류 상태를 전환할 수 있습니다. 시안 버튼은 배치 비교용입니다.
+
+## 구현 규칙
+
+- 목록 썸네일은 16:9로 표시하고 제목 두 줄, 채널과 영상 유형 한 줄을 확보합니다.
+- 선택한 영상은 큰 이미지와 전체 제목을 읽을 수 있는 상세 영역으로 연결합니다. 네이티브 상세 제목은 최대 세 줄이며 YouTube에서 원본 제목을 확인할 수 있습니다.
+- 링크 복사는 주 동작, YouTube 열기는 보조 동작입니다. 중계 설정은 별도로 펼칩니다.
+- 작은 Windows 창에서는 복사와 중계를 하단으로 옮깁니다. 최대화 시 본문을 1440 논리 픽셀 안에 가운데 정렬합니다.
+- 웹은 지원하는 검색, 선택, 복사, 원본 열기만 제공합니다. 중계 조작은 Windows 앱에만 있습니다.
+- 로딩은 실제 결과 행과 같은 썸네일 및 텍스트 골격을 사용합니다. 오류, 빈 결과, 유형 변경 안내를 구분합니다.
+- 조건에 맞는 영상이 없으면 일반 YouTube 결과를 먼저 보여 주고 유형을 보장하지 않음을 구분합니다.
+- 실제 제목과 채널의 가운데점도 화면에서는 공백으로 치환합니다.
+
+## 글꼴과 동작 효과
+
+Pretendard JP 1.3.9의 Regular와 SemiBold를 포함합니다. Windows에서는 앱 프로세스 안에만 등록하고 웹에서는 자체 서버의 WOFF2를 사용합니다. GDI의 이전 글꼴 이름 규칙에 맞춰 SemiBold를 별도 패밀리 이름으로 지정합니다. 파일의 존재뿐 아니라 실제 GDI 선택 결과와 한국어, 일본어 글리프를 검사했습니다.
+
+Windows 결과 제목은 18px, 채널은 14px, 동작은 15px를 기준으로 DPI에 맞춰 확대합니다. 제목은 실제 SemiBold, 설명은 Regular를 사용합니다. 시스템 등록 실패 시 맑은 고딕으로 대체합니다.
+
+Windows는 16ms 타이머로 호버와 선택 색상을 짧게 보간하고 완료되면 타이머를 중지합니다. 웹의 호버와 선택 전환은 120~140ms, 결과 페이드는 150ms입니다. 위치를 밀거나 과도하게 움직이는 효과는 넣지 않았습니다. Windows의 클라이언트 애니메이션 설정과 웹의 prefers-reduced-motion을 따릅니다.
+
+## 검토 결과
+
+기능과 시각 검토를 구분했습니다. 자동 검사 26개 통과, 네트워크 및 터널 라이브 검사 6개는 기본 검사에서 제외됩니다. 이번 화면 검토에서는 실제 검색, 썸네일, 긴 혼합 제목, 선택 변경, 복사, 중계 펼침, 일반 검색 대체를 확인했습니다. VRChat 플레이어 안에서의 재생 검사는 이번 디자인 변경 검증에 포함하지 않았습니다.
+
+레이아웃은 100%, 125%, 150%, 200% DPI의 작은 창과 큰 창, 접힘과 펼침 상태에서 겹침을 검사했습니다. 웹 390px 화면에서 가로 넘침 없이 결과와 하단 동작이 유지됨을 확인했습니다.
+
+[레퍼런스와 최종 화면 비교](reference-comparison.html)에는 실제 Windows 화면과 Cider 제품 화면을 나란히 배치했습니다. 비교 후 장식용 레코드와 번호, 어두운 선택 카드, 중복 조작을 제거하고 글꼴과 탭 강조색을 통일했습니다.
+
+## 참고 자료
+
+- [Cider 실제 제품 화면](https://cider.sh/): 이미지와 곡 정보, 현재 선택 콘텐츠의 동작 배치
+- [Raycast Spotify Player](https://www.raycast.com/mattisssa/spotify-player): 검색과 선택 후 동작의 흐름
+- [Linear UI 재설계](https://linear.app/now/how-we-redesigned-the-linear-ui): 정렬, 계층, 화면 밀도 검토
+- [Anthropic frontend-design](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md): 제품에 맞는 구조와 반복적인 기본 장식 회피
+- [Interface Design](https://github.com/Dammyjay93/interface-design): 제품 작업과 정보 계층 중심의 검토
+- [Impeccable Critique](https://impeccable.style/docs/critique/): 화면의 우선순위와 불필요한 표현 점검
+- [Figma Visual Prompt Engineering](https://www.figma.com/resource-library/visual-prompt-engineering/): 구체적인 레퍼런스 속성을 분리해 적용하고 결과 비교
+- [Vercel Web Interface Guidelines](https://vercel.com/design/guidelines): 상태, 키보드와 넘침 검토
+- [Pretendard 공식 배포](https://github.com/orioncactus/pretendard/releases/tag/v1.3.9): 글꼴과 SIL Open Font License

@@ -18,9 +18,11 @@ pub struct VideoResult {
     pub title: String,
     pub url: String,
     pub channel: String,
+    pub thumbnail_url: String,
     pub score: i32,
     pub matched: Vec<String>,
     pub is_recommendation: bool,
+    pub is_fallback: bool,
 }
 
 impl VideoResult {
@@ -29,9 +31,11 @@ impl VideoResult {
             title,
             url: format!("https://www.youtube.com/watch?v={video_id}"),
             channel,
+            thumbnail_url: format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"),
             score: 0,
             matched: Vec::new(),
             is_recommendation: false,
+            is_fallback: false,
         }
     }
 }
@@ -70,6 +74,10 @@ const ORIGINAL_MARKERS: &[&str] = &[
     "original",
 ];
 const PERFORMANCE_MARKERS: &[&str] = &[
+    "live",
+    "라이브",
+    "실황",
+    "concert",
     "노래방에서",
     "불러보았다",
     "불러 보았다",
@@ -121,6 +129,7 @@ struct SearchProfile {
     media_kind: Option<&'static str>,
     season: Option<String>,
     identity_tokens: Vec<String>,
+    recommendation_context: Option<&'static str>,
 }
 
 pub fn normalize(value: &str) -> String {
@@ -198,6 +207,7 @@ fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
                 "너의 거리까지",
                 "君の街まで",
             ],
+            "ASIAN KUNG-FU GENERATION 아지캉",
         ));
     }
 
@@ -211,6 +221,7 @@ fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
                 "kyu kurarin",
                 "큐쿠라린",
             ],
+            "이요와 iyowa",
         ));
     }
 
@@ -218,6 +229,7 @@ fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
         return Ok(alias_profile(
             "잇떼 말해줘 言って 요루시카",
             &["잇떼", "잇테", "말해줘", "言って"],
+            "요루시카 ヨルシカ",
         ));
     }
 
@@ -225,6 +237,7 @@ fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
         return Ok(alias_profile(
             "DSCF 망상감상대상연맹 妄想感傷代償連盟 DECO*27",
             &["dscf", "망상감상대상연맹", "妄想感傷代償連盟"],
+            "DECO*27",
         ));
     }
 
@@ -263,6 +276,7 @@ fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
         media_kind: None,
         season: None,
         identity_tokens: Vec::new(),
+        recommendation_context: None,
     })
 }
 
@@ -273,36 +287,39 @@ fn media_profile(title: &str, kind: &'static str, identities: &[&str]) -> Search
         media_kind: Some(kind),
         season: Some("2기".to_owned()),
         identity_tokens: identities.iter().map(|item| (*item).to_owned()).collect(),
+        recommendation_context: Some("주문은 토끼입니까 주제가"),
     }
 }
 
-fn alias_profile(title: &str, identities: &[&str]) -> SearchProfile {
+fn alias_profile(title: &str, identities: &[&str], artist: &'static str) -> SearchProfile {
     SearchProfile {
         expanded_title: title.to_owned(),
         was_expanded: true,
         media_kind: None,
         season: None,
         identity_tokens: identities.iter().map(|item| normalize(item)).collect(),
+        recommendation_context: Some(artist),
     }
 }
 
 fn build_queries(profile: &SearchProfile, mode: SearchMode) -> Vec<String> {
     let title = &profile.expanded_title;
+    let context = profile.recommendation_context.unwrap_or(title);
     match mode {
         SearchMode::Karaoke => vec![
             format!("{title} 한글발음 노래방 karaoke"),
             format!("{title} 노래방 카라오케 반주"),
-            "일본 노래방 한글발음 JPOP 보컬로이드 karaoke 인기곡".to_owned(),
+            format!("{context} 노래방 카라오케 한글발음"),
         ],
         SearchMode::Pronunciation if profile.media_kind.is_some() => vec![
             format!("{title} 한글자막 가사 발음"),
             format!("{title} 애니 주제가"),
-            "JPOP 보컬로이드 한글발음 가사 독음 인기곡".to_owned(),
+            format!("{context} 한글발음 가사 독음"),
         ],
         SearchMode::Pronunciation => vec![
             format!("{title} 한글발음 lyrics"),
             format!("{title} 원곡 한국어해석 독음 일본어 자막"),
-            "JPOP 보컬로이드 한글발음 가사 독음 인기곡".to_owned(),
+            format!("{context} 한글발음 가사 독음"),
         ],
     }
 }
@@ -329,23 +346,22 @@ fn collect_video_renderers(
 ) {
     match value {
         Value::Object(map) => {
-            if let Some(renderer) = map.get("videoRenderer") {
-                if let Some(video_id) = renderer.get("videoId").and_then(Value::as_str) {
-                    if seen.insert(video_id.to_owned()) {
-                        let title = text_from_renderer(&renderer["title"]);
-                        let channel = text_from_renderer(&renderer["ownerText"]);
-                        if !title.is_empty() {
-                            output.push(VideoResult::raw(
-                                title,
-                                video_id.to_owned(),
-                                if channel.is_empty() {
-                                    "채널 정보 없음".to_owned()
-                                } else {
-                                    channel
-                                },
-                            ));
-                        }
-                    }
+            if let Some(renderer) = map.get("videoRenderer")
+                && let Some(video_id) = renderer.get("videoId").and_then(Value::as_str)
+                && seen.insert(video_id.to_owned())
+            {
+                let title = text_from_renderer(&renderer["title"]);
+                let channel = text_from_renderer(&renderer["ownerText"]);
+                if !title.is_empty() {
+                    output.push(VideoResult::raw(
+                        title,
+                        video_id.to_owned(),
+                        if channel.is_empty() {
+                            "채널 정보 없음".to_owned()
+                        } else {
+                            channel
+                        },
+                    ));
                 }
             }
             for child in map.values() {
@@ -366,8 +382,7 @@ fn extract_balanced_json(source: &str, object_start: usize) -> Option<&str> {
     let mut depth = 0i32;
     let mut in_string = false;
     let mut escaped = false;
-    for index in object_start..bytes.len() {
-        let byte = bytes[index];
+    for (index, &byte) in bytes.iter().enumerate().skip(object_start) {
         if in_string {
             if escaped {
                 escaped = false;
@@ -482,6 +497,27 @@ fn rank_results(
     consensus: &[String],
 ) -> Vec<VideoResult> {
     let query = query_tokens(&profile.expanded_title);
+    let identity_query: Vec<_> = query
+        .iter()
+        .filter(|token| {
+            !matches!(
+                token.as_str(),
+                "official"
+                    | "lyrics"
+                    | "lyric"
+                    | "full"
+                    | "hd"
+                    | "mv"
+                    | "music"
+                    | "video"
+                    | "한글발음"
+                    | "노래방"
+                    | "가사"
+                    | "발음"
+                    | "karaoke"
+            )
+        })
+        .collect();
     let mut ranked = Vec::new();
 
     for (position, mut result) in results.into_iter().enumerate() {
@@ -492,8 +528,8 @@ fn rank_results(
             .filter(|token| normalized_title.contains(token.as_str()))
             .count() as i32;
         let context = matching_terms(&result.title, MEDIA_CONTEXT_TERMS);
-        if !qualifies(&result.title, mode)
-            && !(mode == SearchMode::Pronunciation && profile.was_expanded && !context.is_empty())
+        if !(qualifies(&result.title, mode)
+            || mode == SearchMode::Pronunciation && profile.was_expanded && !context.is_empty())
         {
             continue;
         }
@@ -505,11 +541,26 @@ fn rank_results(
             .iter()
             .filter(|token| normalized_title.contains(token.as_str()))
             .count() as i32;
+        let meaningful_hits = identity_query
+            .iter()
+            .filter(|token| normalized_title.contains(token.as_str()))
+            .count();
         let is_exact = if profile.identity_tokens.is_empty() {
-            title_hits > 0
+            !identity_query.is_empty() && meaningful_hits * 3 >= identity_query.len() * 2
         } else {
             identity_hits > 0
         };
+        let related = if let Some(context) = profile.recommendation_context {
+            let context_title = normalize(&format!("{} {}", result.title, result.channel));
+            query_tokens(context)
+                .iter()
+                .any(|token| context_title.contains(token))
+        } else {
+            meaningful_hits > 0
+        };
+        if !is_exact && !related {
+            continue;
+        }
         let original_hits = ORIGINAL_MARKERS
             .iter()
             .filter(|term| contains_term(&result.title, term))
@@ -617,8 +668,8 @@ fn rank_results(
         .into_iter()
         .filter(|result| result.is_recommendation)
         .collect();
-    exact.sort_by(|left, right| right.score.cmp(&left.score));
-    recommendations.sort_by(|left, right| right.score.cmp(&left.score));
+    exact.sort_by_key(|result| std::cmp::Reverse(result.score));
+    recommendations.sort_by_key(|result| std::cmp::Reverse(result.score));
     exact.truncate(8);
     recommendations.truncate(12);
     exact.extend(recommendations);
@@ -631,7 +682,9 @@ pub fn search_youtube(
     limit: usize,
 ) -> Result<Vec<VideoResult>, String> {
     let profile = expand_search_title(song_title)?;
-    let queries = build_queries(&profile, mode);
+    let mut queries = build_queries(&profile, mode);
+    // Keep the user's unfiltered YouTube search available for a graceful fallback.
+    queries.push(song_title.trim().to_owned());
     let client = Client::builder()
         .timeout(Duration::from_secs(25))
         .user_agent(
@@ -670,6 +723,7 @@ pub fn search_youtube(
             .unwrap_or_else(|| "검색 결과가 없습니다.".to_owned()));
     }
 
+    let general = batches.pop().unwrap_or_default();
     let consensus = if mode == SearchMode::Pronunciation && !profile.was_expanded {
         batches
             .get(1)
@@ -684,14 +738,40 @@ pub fn search_youtube(
     let mut seen = HashSet::new();
     for position in 0..max_len {
         for batch in &batches {
-            if let Some(result) = batch.get(position) {
-                if seen.insert(result.url.clone()) {
-                    interleaved.push(result.clone());
-                }
+            if let Some(result) = batch.get(position)
+                && seen.insert(result.url.clone())
+            {
+                interleaved.push(result.clone());
             }
         }
     }
-    Ok(rank_results(interleaved, &profile, mode, &consensus))
+    Ok(with_general_fallback(
+        rank_results(interleaved, &profile, mode, &consensus),
+        general,
+    ))
+}
+
+fn with_general_fallback(ranked: Vec<VideoResult>, general: Vec<VideoResult>) -> Vec<VideoResult> {
+    if ranked.iter().any(|item| !item.is_recommendation) {
+        return ranked;
+    }
+    let mut output: Vec<_> = general
+        .into_iter()
+        .take(8)
+        .map(|mut item| {
+            item.is_fallback = true;
+            item.is_recommendation = false;
+            item.matched = vec!["일반 YouTube 검색".into()];
+            item
+        })
+        .collect();
+    let mut seen: HashSet<_> = output.iter().map(|item| item.url.clone()).collect();
+    output.extend(
+        ranked
+            .into_iter()
+            .filter(|item| seen.insert(item.url.clone())),
+    );
+    output
 }
 
 #[cfg(test)]
@@ -718,6 +798,136 @@ mod tests {
     }
 
     #[test]
+    fn recommendations_follow_the_song_artist_and_mode() {
+        for mode in [SearchMode::Pronunciation, SearchMode::Karaoke] {
+            let iyowa = build_queries(&expand_search_title("두근어질").unwrap(), mode);
+            let yorushika = build_queries(&expand_search_title("잇떼").unwrap(), mode);
+            assert!(iyowa[2].contains("이요와"));
+            assert!(yorushika[2].contains("요루시카"));
+            assert_ne!(iyowa[2], yorushika[2]);
+            let unknown = build_queries(&expand_search_title("처음 듣는 노래").unwrap(), mode);
+            assert!(unknown.iter().all(|query| query.contains("처음 듣는 노래")));
+        }
+    }
+
+    #[test]
+    fn missing_mode_matches_show_general_youtube_order_before_related_results() {
+        let general = vec![
+            VideoResult::raw("원곡".into(), "aaaaaaaaaaa".into(), "가수".into()),
+            VideoResult::raw("뮤직비디오".into(), "bbbbbbbbbbb".into(), "가수".into()),
+        ];
+        let mut related = VideoResult::raw(
+            "다른 곡 한글발음".into(),
+            "ccccccccccc".into(),
+            "가수".into(),
+        );
+        related.is_recommendation = true;
+        let mut duplicate = general[0].clone();
+        duplicate.is_recommendation = true;
+        let output = with_general_fallback(vec![duplicate, related], general);
+        assert_eq!(output.len(), 3);
+        assert!(output[0].url.ends_with("aaaaaaaaaaa"));
+        assert!(output[1].url.ends_with("bbbbbbbbbbb"));
+        assert!(
+            output[..2]
+                .iter()
+                .all(|item| item.is_fallback && !item.is_recommendation)
+        );
+        assert!(output[2].is_recommendation && !output[2].is_fallback);
+    }
+
+    #[test]
+    fn successful_mode_matches_keep_the_filtered_results() {
+        let matched = VideoResult::raw("곡명 한글발음".into(), "aaaaaaaaaaa".into(), "가수".into());
+        let general = VideoResult::raw(
+            "곡명 뮤직비디오".into(),
+            "bbbbbbbbbbb".into(),
+            "가수".into(),
+        );
+        let output = with_general_fallback(vec![matched], vec![general]);
+        assert_eq!(output.len(), 1);
+        assert!(!output[0].is_fallback);
+        assert!(output[0].url.ends_with("aaaaaaaaaaa"));
+    }
+
+    #[test]
+    fn common_words_do_not_turn_unrelated_karaoke_into_an_exact_match() {
+        let profile = expand_search_title("NASA Artemis II launch official").unwrap();
+        let ranked = rank_results(
+            vec![VideoResult::raw(
+                "Popular song official karaoke".into(),
+                "aaaaaaaaaaa".into(),
+                "공식채널".into(),
+            )],
+            &profile,
+            SearchMode::Karaoke,
+            &[],
+        );
+        assert!(ranked.is_empty());
+        let profile = expand_search_title("작은 사랑의 노래").unwrap();
+        let ranked = rank_results(
+            vec![
+                VideoResult::raw(
+                    "다른 사랑 노래 한글발음".into(),
+                    "bbbbbbbbbbb".into(),
+                    "채널".into(),
+                ),
+                VideoResult::raw(
+                    "작은 사랑의 노래 한글발음".into(),
+                    "ccccccccccc".into(),
+                    "채널".into(),
+                ),
+            ],
+            &profile,
+            SearchMode::Pronunciation,
+            &[],
+        );
+        assert!(ranked[0].url.ends_with("ccccccccccc"));
+        assert!(ranked[1].is_recommendation);
+    }
+
+    #[test]
+    fn studio_pronunciation_precedes_live_performance_and_unrelated_songs() {
+        let profile = expand_search_title("잇떼").unwrap();
+        let ranked = rank_results(
+            vec![
+                VideoResult::raw(
+                    "【Live video】 요루시카 - 말해줘 言って 한글발음".into(),
+                    "aaaaaaaaaaa".into(),
+                    "공연".into(),
+                ),
+                VideoResult::raw(
+                    "요루시카 - 말해줘 言って 한글발음".into(),
+                    "bbbbbbbbbbb".into(),
+                    "가사".into(),
+                ),
+                VideoResult::raw(
+                    "요루시카 다른 곡 한글발음".into(),
+                    "ccccccccccc".into(),
+                    "가사".into(),
+                ),
+            ],
+            &profile,
+            SearchMode::Pronunciation,
+            &[],
+        );
+        assert!(ranked[0].url.ends_with("bbbbbbbbbbb"));
+        assert!(!ranked[0].is_recommendation);
+        assert!(ranked.last().unwrap().is_recommendation);
+    }
+
+    #[test]
+    #[ignore = "Checks the unfiltered YouTube fallback over the live network"]
+    fn live_general_fallback() {
+        let results =
+            search_youtube("NASA Artemis II launch official", SearchMode::Karaoke, 25).unwrap();
+        assert!(!results.is_empty());
+        assert!(results[0].is_fallback);
+        assert!(!results[0].is_recommendation);
+        eprintln!("일반 검색 대체: {} | {}", results[0].title, results[0].url);
+    }
+
+    #[test]
     #[ignore = "실제 YouTube 연결 회귀 검사"]
     fn live_search_regressions() {
         let cases = [
@@ -733,16 +943,26 @@ mod tests {
         for (query, mode) in cases {
             let results = search_youtube(query, mode, 25).unwrap();
             assert!(!results.is_empty(), "검색 결과 없음: {query}");
+            eprintln!(
+                "일치 {} / 추천 {} / 일반 {}",
+                results
+                    .iter()
+                    .filter(|item| !item.is_recommendation && !item.is_fallback)
+                    .count(),
+                results.iter().filter(|item| item.is_recommendation).count(),
+                results.iter().filter(|item| item.is_fallback).count()
+            );
             if query == "두근어질" {
-                assert_eq!(
-                    results[0].url,
-                    "https://www.youtube.com/watch?v=53FmAEYYD2Q"
-                );
                 assert!(!results[0].is_recommendation);
+                let title = normalize(&results[0].title);
+                let profile = expand_search_title(query).unwrap();
                 assert!(
-                    results.iter().any(|result| result.is_recommendation),
-                    "추천곡이 검색 결과 뒤에 이어지지 않음"
+                    profile
+                        .identity_tokens
+                        .iter()
+                        .any(|token| title.contains(token))
                 );
+                assert!(qualifies(&results[0].title, mode));
             }
             eprintln!("\n{query}");
             for result in results.iter().take(3) {

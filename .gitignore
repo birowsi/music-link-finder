@@ -1,3 +1,6 @@
 target/
 tools/
 .relay-cache/
+config.txt
+log_run.txt
+window-state.txt

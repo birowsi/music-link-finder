@@ -3,53 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f5f2e9">
-  <meta name="description" content="곡명 하나로 한글 발음 영상과 노래방 반주 링크를 찾는 음악 검색 아카이브.">
-  <title>곡선 — 음악 링크 아카이브</title>
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="곡 제목으로 한글 발음 영상과 노래방 반주를 찾고 YouTube 링크를 복사하세요.">
+  <title>UtaLink — 음악 링크 찾기</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=miku">
+  <link rel="preload" href="/fonts/pretendard-jp-regular-v1.3.9.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css">
   <script defer src="/app.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#search-heading">검색으로 건너뛰기</a>
+  <a class="skip-link" href="#song-query">검색으로 건너뛰기</a>
   <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="곡선 홈"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>곡선<span class="brand-period">.</span><small>음악 링크 아카이브</small></span></a>
-      <span class="top-note">찾고 싶은 곡에서, 듣고 싶은 영상까지.</span>
-      <span class="edition">음악을 찾는 또 하나의 방법 <span aria-hidden="true">↗</span></span>
+      <a class="brand" href="/" aria-label="UtaLink 홈"><span>UtaLink<small>YouTube 음악 검색</small></span></a>
+
     </header>
     <main>
-      <section class="intro" aria-labelledby="hero-title">
-        <div class="intro-label"><span class="issue-index">01 — 탐색</span><span class="intro-rule"></span><span>음악 검색 기록</span></div>
-        <div class="intro-grid">
-          <h1 id="hero-title">노래를 찾는<br><em>가장 간결한 경로.</em></h1>
-          <div class="intro-aside"><span class="accent-line" aria-hidden="true"></span><p>가사로 따라 부르고 싶은 곡,<br>반주로 다시 만나고 싶은 곡.<br>제목만 알면 링크를 모아 보여드려요.</p><p class="aside-small">한국어 · 일본어 · 영어 · 별칭 검색</p></div>
-        </div>
-      </section>
       <section class="search-section" aria-labelledby="search-heading">
-        <div class="section-head"><div><span class="section-no">01</span><h2 id="search-heading">곡 찾기</h2></div><p>찾고 싶은 노래의 제목이나 별칭을 입력해 주세요.</p></div>
+        <h1 id="search-heading" class="sr-only">곡 찾기</h1>
         <form id="search-form" novalidate>
-          <label for="song-query" class="field-label">곡명 / 별칭</label>
-          <div class="search-row"><input id="song-query" name="q" type="search" maxlength="120" placeholder="예: 잇떼, 두근어질" autocomplete="off" required aria-describedby="search-help"><button type="submit" id="submit-btn" class="search-button"><span id="button-text">영상 찾기</span><span aria-hidden="true">↗</span></button></div>
-          <p class="input-hint" id="search-help">정확한 제목이 아니어도 괜찮아요. 다양한 표기를 검색할 수 있어요.</p>
-          <fieldset class="mode-picker"><legend class="field-label">어떤 영상을 찾으세요?</legend><div class="mode-grid">
-            <label class="mode-option"><input type="radio" name="mode" value="pronunciation" checked><span class="mode-content"><span class="mode-number">A</span><span class="mode-copy"><strong>한글 발음</strong><small>발음 가사 · 한글 자막</small></span><span class="radio-indicator" aria-hidden="true"></span></span></label>
-            <label class="mode-option"><input type="radio" name="mode" value="karaoke"><span class="mode-content"><span class="mode-number">B</span><span class="mode-copy"><strong>노래방 · 카라오케</strong><small>KY · TJ · 반주 영상</small></span><span class="radio-indicator" aria-hidden="true"></span></span></label>
-          </div></fieldset>
-          <label class="auto-copy-option" for="auto-copy">
-            <span class="auto-copy-copy"><strong>첫 번째 링크 자동 복사</strong><small id="auto-copy-help">켜면 검색 완료 시 맨 위 결과의 링크를 복사해요.</small></span>
-            <input id="auto-copy" type="checkbox" role="switch" aria-describedby="auto-copy-help">
-            <span class="switch-track" aria-hidden="true"></span>
-          </label>
+          <label for="song-query" class="sr-only">곡 제목이나 별칭</label>
+          <div class="search-row"><input id="song-query" name="q" type="search" maxlength="120" placeholder="곡 제목 또는 별칭" autocomplete="off" required aria-describedby="search-help"><button type="submit" id="submit-btn" class="search-button"><span id="button-text">검색</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12h14m-5-5 5 5-5 5"/></svg></button></div>
+          <div class="search-options">
+            <fieldset class="mode-picker"><legend class="sr-only">영상 유형</legend><div class="mode-grid">
+              <label class="mode-option"><input type="radio" name="mode" value="pronunciation" checked><span>한글 발음</span></label>
+              <label class="mode-option"><input type="radio" name="mode" value="karaoke"><span>노래방 반주</span></label>
+            </div></fieldset>
+            <label class="auto-copy-option" for="auto-copy"><input id="auto-copy" type="checkbox" role="switch" aria-describedby="auto-copy-help"><span class="switch-track" aria-hidden="true"></span><span>첫 번째 링크 자동 복사</span></label>
+          </div>
+          <p id="search-help" class="sr-only">한국어, 일본어, 영어로 검색할 수 있습니다.</p><p id="auto-copy-help" class="sr-only">켜면 검색이 끝났을 때 첫 번째 영상의 링크를 복사합니다.</p>
         </form>
       </section>
-      <section class="results-section" id="results-section" aria-labelledby="results-title">
-        <div class="section-head results-header"><div><span class="section-no">02</span><h2 id="results-title">검색 목록</h2></div><span id="result-count" class="result-count" hidden></span></div>
-        <div id="status" class="empty-state" role="status" aria-live="polite"><span class="state-symbol" aria-hidden="true">—</span><div><h3>아직 검색한 곡이 없어요.</h3><p>곡명과 영상 유형을 선택하면 관련 결과를 보여드려요.</p></div></div>
-        <div id="results" class="results" hidden></div>
-        <div id="fallback" class="fallback" hidden><label for="fallback-url">링크 직접 복사</label><p>자동 복사가 제한되어 있어요. 아래 주소를 선택해 복사해 주세요.</p><div class="fallback-row"><input id="fallback-url" type="text" readonly><button id="fallback-select" type="button">전체 선택</button></div></div>
-      </section>
+      <div class="workspace">
+        <section class="results-section" id="results-section" aria-labelledby="results-title">
+          <div class="results-header"><h2 id="results-title">검색 결과</h2><span id="result-count" class="result-count" hidden></span></div>
+          <div id="status" class="empty-state" role="status" aria-live="polite"></div>
+          <div id="results" class="results" hidden></div>
+          <div id="fallback" class="fallback" hidden><label for="fallback-url">직접 복사하기</label><p>브라우저에서 복사가 제한되어 있습니다. 주소를 선택해 복사하세요.</p><div class="fallback-row"><input id="fallback-url" type="text" readonly><button id="fallback-select" type="button">전체 선택</button></div></div>
+        </section>
+        <aside class="selection-panel" aria-label="선택한 영상">
+          <div class="preview"><img id="selected-image" alt="" hidden><span id="preview-placeholder">미리보기 없음</span></div>
+          <div class="selected-info"><p id="selected-kind" class="selected-kind"></p><h2 id="selected-title">선택한 영상</h2><p id="selected-channel"></p></div>
+          <div class="selected-actions"><button id="selected-copy" type="button" class="selected-copy" disabled>링크 복사</button><a id="selected-open" class="selected-open" target="_blank" rel="noopener noreferrer" hidden>YouTube</a></div>
+          <p class="desktop-note">VRChat 중계는 Windows 앱에서 사용할 수 있습니다.</p>
+        </aside>
+      </div>
     </main>
-    <footer><span>곡선. <span class="footer-light">Music Link Archive</span></span><span>YouTube 비공식 검색 · 모든 영상은 YouTube에서 열립니다.</span></footer>
+    <footer><span>UtaLink</span><span>YouTube 비공식 검색</span></footer>
   </div>
 </body>
 </html>

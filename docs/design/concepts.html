@@ -1,0 +1,180 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>UtaLink 구조 비교</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#e8edf4;font-family:"Pretendard","Malgun Gothic",sans-serif;color:#17243b}button,input{font:inherit}button{cursor:pointer}header.research{padding:24px 32px;background:#fff;border-bottom:1px solid #dce3ee}.research h1{margin:0 0 8px;font-size:22px}.research p{margin:0;color:#62718a;font-size:13px;line-height:1.7}.switches{display:flex;gap:8px;margin-top:18px}.switches button{border:1px solid #dce3ee;background:#fff;border-radius:8px;padding:10px 16px}.switches button[aria-pressed=true]{background:#234fda;color:white;border-color:#234fda}.summary{margin-top:15px!important}.frame{margin:24px auto;max-width:1260px;background:#fff;border:1px solid #cfd9e9;border-radius:12px;overflow:hidden;box-shadow:0 18px 60px #14254612}.titlebar{padding:12px 22px;background:#f7f9fc;font-size:12px;color:#6b7c93;display:flex;justify-content:space-between}.apphead{display:flex;align-items:center;gap:24px;padding:24px}.brand{font-size:25px;font-weight:750;letter-spacing:-1px}.find{display:flex;flex:1;gap:8px}.find input{flex:1;min-width:0;background:#f4f7fb;border:1px solid #e1e7f0;border-radius:8px;padding:14px 16px}.primary{background:#315ce5;color:white;border:0;border-radius:7px;padding:12px 22px;font-weight:600}.options{padding:0 24px 20px;display:flex;gap:22px;align-items:center;color:#64748b;font-size:13px}.tab{color:#234fda;font-weight:700}.content{display:grid;grid-template-columns:minmax(0,1fr) 350px;border-top:1px solid #e6ebf3;min-height:560px}.list{padding:20px}.listhead{display:flex;justify-content:space-between;margin:0 0 14px;font-size:12px;color:#718096}.row{width:100%;text-align:left;background:white;border:1px solid transparent;border-radius:7px;padding:12px;display:grid;grid-template-columns:116px minmax(0,1fr);gap:16px;align-items:center;margin-bottom:4px;color:inherit}.row.selected{background:#edf3ff;border-color:#d5e2ff}.row img{width:116px;aspect-ratio:16/9;object-fit:cover;border-radius:4px;background:#e9eef5}.row h3{font-size:14px;line-height:1.65;margin:0 0 6px;font-weight:650;word-break:keep-all}.row p{font-size:12px;color:#697b94;margin:0}.pill{display:inline-block;font-size:11px;color:#3b638f;margin-right:10px}.detail{background:#f8fafd;border-left:1px solid #e6ebf3;padding:24px}.detail small{color:#73849a;font-size:12px}.detail img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:7px;margin:16px 0}.detail h2{font-size:18px;line-height:1.65;margin:0 0 10px;word-break:keep-all}.channel{font-size:12px;color:#6d7c91;margin:0 0 18px}.detail .primary{width:100%;margin-top:8px}.secondary{background:#fff;border:1px solid #dce3ee;border-radius:7px;padding:12px 18px;color:#36465e;margin-top:10px;width:100%}.relay{margin-top:26px;padding-top:20px;border-top:1px solid #e1e7f0;font-size:13px;color:#51657f;display:flex;justify-content:space-between}.footer{padding:12px 24px;border-top:1px solid #e6ebf3;color:#7a889d;font-size:11px}.grid .content{display:block}.grid .list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.grid .listhead{grid-column:1/-1}.grid .row{display:block;border:1px solid #e3e9f2;padding:12px}.grid .row img{width:100%;margin-bottom:12px}.grid .row h3{min-height:46px}.grid .detail{border-left:0;border-top:1px solid #e3e9f2;display:grid;grid-template-columns:160px minmax(0,1fr) 170px;gap:20px;align-items:center}.grid .detail img{grid-column:1;grid-row:1/4;margin:0}.grid .detail small{display:none}.grid .detail h2{grid-column:2;grid-row:1;font-size:16px}.grid .detail .channel{grid-column:2;grid-row:2}.grid .detail .primary{grid-column:3;grid-row:1}.grid .detail .secondary{grid-column:3;grid-row:2}.grid .relay{display:none}.compact .frame{max-width:880px}.compact .content{display:block;min-height:0}.compact .apphead{padding-bottom:18px}.compact .options{padding-bottom:16px}.compact .brand{font-size:20px}.compact .row{grid-template-columns:74px minmax(0,1fr);padding:8px 12px}.compact .row img{width:74px}.compact .row h3{font-size:13px;margin-bottom:4px}.compact .detail{display:flex;gap:16px;align-items:center;border:0;border-top:1px solid #e3e9f2;padding:16px 22px}.compact .detail small,.compact .detail img,.compact .detail h2,.compact .detail .channel,.compact .relay{display:none}.compact .detail .primary,.compact .detail .secondary{width:auto;margin:0}.status{padding:70px 30px;color:#6e7d91;font-size:15px}.status h2{color:#273952;font-size:21px} @media(max-width:800px){.frame{margin:16px}.content{grid-template-columns:1fr}.detail{border:0}.grid .list{grid-template-columns:1fr 1fr}.apphead{gap:14px}.brand{font-size:20px}}
+</style>
+<header class="research"><h1>UtaLink 구조 비교</h1><p>실제 검색 결과를 사용한 설계 시안입니다. 세 안의 정보 배치와 선택 동작을 비교합니다.</p><div class="switches" id="modes"><button data-view="split" aria-pressed="true">A. 비교 중심</button><button data-view="grid" aria-pressed="false">B. 썸네일 그리드</button><button data-view="compact" aria-pressed="false">C. 빠른 검색</button></div><p id="summary" class="summary"></p><div class="switches" id="states"><button data-state="ready" aria-pressed="true">검색 결과</button><button data-state="loading">로딩</button><button data-state="general">일반 검색 대체</button><button data-state="error">오류</button></div></header>
+<main id="root"><section class="frame"><div class="titlebar"><span>UtaLink</span><span>설계 시안</span></div><div class="apphead"><span class="brand">UtaLink</span><div class="find"><input value="두근어질" aria-label="검색어"><button class="primary">검색</button></div></div><div class="options"><span class="tab">한글 발음</span><span>노래방 반주</span><span style="margin-left:auto">첫 링크 자동 복사 꺼짐</span></div><div class="content"><div class="list" id="list"></div><aside class="detail" id="detail"></aside></div><div class="footer">시안의 이미지와 제목은 실제 YouTube 검색 결과입니다.</div></section></main>
+<script>
+const root=document.querySelector('#root'),list=document.querySelector('#list'),detail=document.querySelector('#detail');let rows=[],active=0,state='ready';const clean=t=>String(t||'').replace(/[\u30fb\u00b7]/g,' ');const notes={split:'A: Raycast의 검색과 선택 구조에 Cider의 이미지 중심 정보 배치를 적용. 긴 제목 비교와 복사, 중계를 함께 처리하기에 적합합니다.',grid:'B: Cider의 미디어 탐색 방식을 적용. 썸네일 구별은 빠르지만 긴 제목을 비교할 때 줄바꿈이 늘고 조작 영역까지 이동해야 합니다.',compact:'C: Raycast의 짧은 검색 흐름을 적용. 빠른 링크 복사에 유리하지만 영상 상세와 중계 상태를 한눈에 확인하기 어렵습니다.'};
+function el(tag,cls,text){const n=document.createElement(tag);n.className=cls||'';if(text!==undefined)n.textContent=clean(text);return n}function image(v){const i=document.createElement('img');const id=new URL(v.url).searchParams.get('v');i.src='https://i.ytimg.com/vi/'+id+'/mqdefault.jpg';i.alt='';return i}function render(){list.replaceChildren();detail.replaceChildren();if(state==='loading'||state==='error'){const box=el('div','status');box.append(el('h2','',state==='error'?'검색에 연결할 수 없습니다':'영상을 찾고 있습니다'),el('p','',state==='error'?'연결 상태를 확인하고 다시 검색하세요.':'검색 결과와 썸네일을 준비합니다.'));list.append(box);return}const head=el('div','listhead');head.append(el('span','',state==='general'?'일반 YouTube 결과':'곡명 일치와 관련 추천'),el('span','',rows.length+'개 영상'));list.append(head);rows.slice(0,7).forEach((v,i)=>{const b=el('button','row'+(i===active?' selected':''));b.append(image(v));const copy=el('div');copy.append(el('h3','',v.title));const p=el('p');p.append(el('span','pill',state==='general'?'일반 결과':v.is_recommendation?'관련 추천':'한글 발음'),document.createTextNode(clean(v.channel)));copy.append(p);b.append(copy);b.onclick=()=>{active=i;render()};list.append(b)});const v=rows[active];if(!v)return;detail.append(el('small','','선택한 영상'),image(v),el('h2','',v.title),el('p','channel',v.channel));detail.append(el('button','primary','링크 복사'),el('button','secondary','YouTube에서 열기'));const relay=el('div','relay');relay.append(el('span','','VRChat 중계'),el('span','','펼치기'));detail.append(relay)}
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{root.className=b.dataset.view;document.querySelectorAll('[data-view]').forEach(x=>x.setAttribute('aria-pressed',x===b));document.querySelector('#summary').textContent=notes[b.dataset.view]});document.querySelectorAll('[data-state]').forEach(b=>b.onclick=()=>{state=b.dataset.state;document.querySelectorAll('[data-state]').forEach(x=>x.setAttribute('aria-pressed',x===b));render()});document.querySelector('#summary').textContent=notes.split;rows={
+  "results": [
+    {
+      "channel": "민들레",
+      "is_fallback": false,
+      "is_recommendation": false,
+      "matched": [
+        "독음"
+      ],
+      "score": 167,
+      "title": "두근어질 - 이요와 | 가사/독음/번역",
+      "url": "https://www.youtube.com/watch?v=25ewiMJEfm4"
+    },
+    {
+      "channel": "히카리",
+      "is_fallback": false,
+      "is_recommendation": false,
+      "matched": [
+        "독음"
+      ],
+      "score": 156,
+      "title": "두근어질 - 이요와 / 카후 [한국어해석/독음/일본어 자막]",
+      "url": "https://www.youtube.com/watch?v=enFMqRru1KI"
+    },
+    {
+      "channel": "히탐 Hitam",
+      "is_fallback": false,
+      "is_recommendation": false,
+      "matched": [
+        "발음",
+        "한국어자막"
+      ],
+      "score": 143,
+      "title": "두근 어질(きゅうくらりん) - 이요와(いよわ) feat. 카후(可不) [발음/한국어자막]",
+      "url": "https://www.youtube.com/watch?v=6nrJOJ4m-YU"
+    },
+    {
+      "channel": "다레",
+      "is_fallback": false,
+      "is_recommendation": false,
+      "matched": [
+        "한글자막"
+      ],
+      "score": 93,
+      "title": "iyowa - 두근 어질 [きゅうくらりん]  / 한글자막",
+      "url": "https://www.youtube.com/watch?v=5Jv32jV0IxQ"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 145,
+      "title": "[ 발음 ] 화해 - 이요와 ( feat. 하츠네 미쿠 )",
+      "url": "https://www.youtube.com/watch?v=f3-kN5ImQAg"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 133,
+      "title": "[ 발음 ] 민들레 - 이요와 ( feat. 하츠네 미쿠 )",
+      "url": "https://www.youtube.com/watch?v=czNC9omsezI"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 126,
+      "title": "[ 발음 ] 클로버 나이트 - 이요와 ( feat. 하츠네 미쿠 & v flower & 카아이 유키 & GUMI )",
+      "url": "https://www.youtube.com/watch?v=olVdzmKhftk"
+    },
+    {
+      "channel": "베타갤럭틱",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 125,
+      "title": "[가사 | 발음] 이요와 - 두근 어질 feat.카후",
+      "url": "https://www.youtube.com/watch?v=yiUUZKSSEuw"
+    },
+    {
+      "channel": "지구의 가사집 [J-POP]",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 122,
+      "title": "이요와 feat. 아다치 레이 - 열이상(熱異常) [가사/발음/해석]",
+      "url": "https://www.youtube.com/watch?v=abl7pwKmgxk"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 120,
+      "title": "[ 발음 ] 1000년을 살고있어 - 이요와 ( feat. 하츠네 미쿠 )",
+      "url": "https://www.youtube.com/watch?v=mVjEFb6fcUs"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 119,
+      "title": "[ 발음 ] 두근 어질 - 이요와 ( feat. 카후 )",
+      "url": "https://www.youtube.com/watch?v=FRG0zYX4fsc"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 116,
+      "title": "[ 발음 ] 안녕 잭팟 - 이요와 ( feat. v flower )",
+      "url": "https://www.youtube.com/watch?v=cjUx6SrnPsE"
+    },
+    {
+      "channel": "이로시",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 114,
+      "title": "[ 발음 ] 일천광년 - 이요와 ( feat. VOCALOIDs )",
+      "url": "https://www.youtube.com/watch?v=ZCxcU_brMO8"
+    },
+    {
+      "channel": "우타이노",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 99,
+      "title": "행성직렬 [惑星直列] - Iyowa 한국어 [가사/발음/해석]",
+      "url": "https://www.youtube.com/watch?v=pSVKADVelic"
+    },
+    {
+      "channel": "떡뮤 노래방",
+      "is_fallback": false,
+      "is_recommendation": true,
+      "matched": [
+        "발음"
+      ],
+      "score": 70,
+      "title": "[한글가사/발음/번역] 열이상 | 熱異常 - 이요와 いよわ ◜에이세이 JPOP◞",
+      "url": "https://www.youtube.com/watch?v=AzkCzLuPiDk"
+    }
+  ]
+}.results;render();
+</script></html>
