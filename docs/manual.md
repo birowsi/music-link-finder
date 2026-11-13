@@ -146,6 +146,20 @@ cargo check --bin music-link-finder-web
 
 웹에서는 개별 링크를 복사할 수 있으며, `첫 번째 링크 자동 복사` 스위치를 켜면 검색 완료 시 화면 맨 위 결과의 링크를 자동으로 복사합니다. 스위치는 페이지를 열 때 기본으로 꺼져 있습니다. 브라우저 보안 정책으로 복사가 차단되면 수동 복사 입력창을 보여 줍니다.
 
+### 디스코드·트위터 링크 미리보기
+
+서버가 처음 반환하는 HTML에 Open Graph와 `twitter:card=summary_large_image` 메타정보를 포함합니다. 자바스크립트를 실행하지 않는 미리보기 봇도 제목·설명·공유 이미지·대표 주소를 읽을 수 있습니다.
+
+- 공유 이미지: `GET /share/utalink-v1.png` — 1200×630 PNG. `HEAD`도 지원하며 로그인 없이 접근할 수 있습니다. 버전이 있는 경로로 제공하므로 이미지를 교체할 때는 파일명과 서버의 `SHARE_IMAGE_PATH` 버전을 함께 올립니다.
+- 대표 주소 우선순위: `PUBLIC_BASE_URL` → Render의 `RENDER_EXTERNAL_URL` → 로컬 실행 주소 `http://localhost:포트`. Render에서는 별도 설정 없이 실제 `onrender.com` 주소를 사용합니다. 사용자 도메인은 `PUBLIC_BASE_URL=https://music.example.com`처럼 설정하며 경로·쿼리·로그인 정보는 넣지 않습니다. [Render 기본 환경변수](https://render.com/docs/environment-variables)
+- 이미지와 대표 주소는 요청의 `Host`나 `Forwarded` 헤더에서 만들지 않습니다. 설정된 공개 주소를 사용하고 잘못된 주소 설정은 시작 시 오류로 알립니다.
+- `/robots.txt`는 사이트의 수집을 허용합니다. 단, Render 무료 서비스가 절전 중일 때는 Render가 별도의 응답을 제공할 수 있고 첫 요청에 서버 기동 지연이 발생합니다. 이 호스팅 동작은 앱의 OG 태그만으로 해결되지 않습니다. [Render 무료 서비스 안내](https://render.com/docs/free)
+- 미리보기는 플랫폼의 수집 시점과 캐시에 따라 즉시 갱신되지 않을 수 있습니다. 메타정보나 이미지가 바뀌면 배포 완료와 이미지 URL의 HTTP 200 응답부터 확인하세요.
+
+공유 이미지는 `web/og-image-v1.png`로 저장하고 실행 파일에 포함합니다. Docker에도 `web/`가 복사되므로 별도 파일 서버나 Python 설치가 필요하지 않습니다. 디자인을 다시 생성할 때만 Pillow가 설치된 환경에서 `python scripts/generate_share_image.py`를 실행합니다. 프로젝트 내장 글꼴과 코드로 그린 도형을 사용합니다.
+
+웹 서버 테스트에는 봇 User-Agent로 받은 HTML, 메타정보의 절대 URL, 이미지의 형식·크기, GET/HEAD와 robots.txt 응답 검증이 포함돼 있습니다.
+
 ### Render 배포 (사용자 실행 단계)
 
 1. 변경 사항을 GitHub 저장소에 푸시합니다.
