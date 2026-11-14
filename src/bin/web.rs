@@ -13,54 +13,14 @@ const PAGE: &str = include_str!("../../web/index.html");
 const CSS: &str = include_str!("../../web/style.css");
 const JS: &str = include_str!("../../web/app.js");
 const FAVICON: &[u8] = include_bytes!("../../assets/app.ico");
-const SHARE_IMAGE_PATH: &str = "/share/utalink-v1.png";
-const SHARE_IMAGE: &[u8] = include_bytes!("../../web/og-image-v1.png");
 
 #[derive(Clone)]
 struct WebState {
     page: Arc<str>,
 }
 
-fn public_origin(
-    custom: Option<&str>,
-    render: Option<&str>,
-    port: u16,
-) -> Result<String, &'static str> {
-    let configured = custom
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| render.map(str::trim).filter(|value| !value.is_empty()));
-    let Some(configured) = configured else {
-        return Ok(format!("http://localhost:{port}"));
-    };
-    let url = reqwest::Url::parse(configured)
-        .map_err(|_| "PUBLIC_BASE_URL / RENDER_EXTERNAL_URL must be an absolute HTTP(S) origin")?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.path() != "/"
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(
-            "PUBLIC_BASE_URL / RENDER_EXTERNAL_URL must contain only scheme, host and optional port",
-        );
-    }
-    // Never build canonical/image URLs from untrusted Host/Forwarded headers.
-    Ok(url.origin().ascii_serialization())
-}
-
-fn render_page(origin: &str) -> String {
-    let escaped = origin
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    PAGE.replace("{{PUBLIC_ORIGIN}}", &escaped)
-        .replace("{{SHARE_IMAGE_PATH}}", SHARE_IMAGE_PATH)
-        .replace("{{STYLESHEET_URL}}", &asset_path("style", "css", CSS))
+fn render_page() -> String {
+    PAGE.replace("{{STYLESHEET_URL}}", &asset_path("style", "css", CSS))
         .replace("{{SCRIPT_URL}}", &asset_path("app", "js", JS))
 }
 
@@ -170,25 +130,6 @@ async fn home(State(state): State<WebState>) -> impl IntoResponse {
     )
 }
 
-async fn share_image() -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "image/png"),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        SHARE_IMAGE,
-    )
-}
-
-async fn robots() -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
-        "User-agent: *\nAllow: /\n",
-    )
-}
 async fn stylesheet() -> impl IntoResponse {
     text_asset(CSS, "text/css; charset=utf-8", false)
 }
@@ -247,8 +188,6 @@ fn router(page: String) -> Router {
         .route("/style.css", get(stylesheet))
         .route("/app.js", get(script))
         .route("/favicon.ico", get(favicon))
-        .route(SHARE_IMAGE_PATH, get(share_image))
-        .route("/robots.txt", get(robots))
         .route(
             "/fonts/pretendard-jp-regular-v1.3.9.woff2",
             get(regular_font),
@@ -271,12 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(address).await?;
-    let origin = public_origin(
-        env::var("PUBLIC_BASE_URL").ok().as_deref(),
-        env::var("RENDER_EXTERNAL_URL").ok().as_deref(),
-        listener.local_addr()?.port(),
-    )?;
-    let app = router(render_page(&origin));
+    let app = router(render_page());
     println!("Music Link Finder listening on http://{address}");
     axum::serve(listener, app).await?;
     Ok(())
@@ -300,75 +234,11 @@ mod tests {
         assert!(!pink.contains('?'));
     }
 
-    #[test]
-    fn canonical_origin_uses_custom_domain_then_render_then_local_port() {
-        assert_eq!(
-            public_origin(
-                Some(" https://EXAMPLE.org:443/ "),
-                Some("https://render.example"),
-                3000
-            )
-            .unwrap(),
-            "https://example.org"
-        );
-        assert_eq!(
-            public_origin(
-                Some(" "),
-                Some("https://music-link-finder.onrender.com/"),
-                3000
-            )
-            .unwrap(),
-            "https://music-link-finder.onrender.com"
-        );
-        assert_eq!(
-            public_origin(None, None, 4317).unwrap(),
-            "http://localhost:4317"
-        );
-        assert_eq!(
-            public_origin(None, Some(""), 4317).unwrap(),
-            "http://localhost:4317"
-        );
-        assert_eq!(
-            public_origin(Some("http://localhost:4000"), None, 3000).unwrap(),
-            "http://localhost:4000"
-        );
-    }
-
-    #[test]
-    fn invalid_origins_fail_instead_of_emitting_broken_or_unsafe_urls() {
-        for value in [
-            "example.org",
-            "file:///tmp/site",
-            "javascript:alert(1)",
-            "https://user:password@example.org",
-            "https://example.org/subpath",
-            "https://example.org/?q=1",
-            "https://example.org/#fragment",
-        ] {
-            assert!(
-                public_origin(Some(value), Some("https://valid.example"), 3000).is_err(),
-                "{value}"
-            );
-        }
-    }
-
-    #[test]
-    fn rendered_metadata_escapes_attributes_and_resolves_every_placeholder() {
-        let page = render_page("https://a&b.example");
-        assert!(page.contains("https://a&amp;b.example/share/utalink-v1.png"));
-        assert!(!page.contains("{{"));
-        let page = render_page("https://invalid.example/\"><script>");
-        assert!(page.contains("&quot;&gt;&lt;script&gt;"));
-    }
-
     #[tokio::test]
-    async fn preview_bots_receive_metadata_png_and_robots_over_http() {
-        use std::collections::HashMap;
-
+    async fn page_and_assets_keep_cache_policy_without_social_previews() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let origin = "https://music-link-finder.onrender.com";
-        let app = router(render_page(origin));
+        let app = router(render_page());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -377,56 +247,24 @@ mod tests {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap();
-        let meta_pattern =
-            regex::Regex::new(r#"<meta (?:name|property)="([^"]+)" content="([^"]*)">"#).unwrap();
-        for bot in ["Discordbot/2.0", "Twitterbot/1.0"] {
-            let response = client
-                .get(&base)
-                .header("user-agent", bot)
-                .header("host", "untrusted.example")
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(
-                response.headers()["content-type"],
-                "text/html; charset=utf-8"
-            );
-            assert_eq!(response.headers()["cache-control"], "no-cache");
-            let html = response.text().await.unwrap();
-            let meta: HashMap<_, _> = meta_pattern
-                .captures_iter(&html)
-                .map(|capture| (capture[1].to_owned(), capture[2].to_owned()))
-                .collect();
-            assert_eq!(meta["og:url"], format!("{origin}/"));
-            assert_eq!(meta["og:type"], "website");
-            assert_eq!(meta["og:image"], format!("{origin}{SHARE_IMAGE_PATH}"));
-            assert_eq!(meta["og:image:type"], "image/png");
-            assert_eq!(meta["og:image:width"], "1200");
-            assert_eq!(meta["og:image:height"], "630");
-            assert_eq!(meta["twitter:card"], "summary_large_image");
-            assert_eq!(meta["twitter:image"], meta["og:image"]);
-            assert_eq!(meta["twitter:title"], meta["og:title"]);
-            assert_eq!(meta["twitter:description"], meta["og:description"]);
-            for key in [
-                "og:title",
-                "og:description",
-                "og:image:alt",
-                "twitter:image:alt",
-            ] {
-                assert!(!meta[key].is_empty());
-            }
-            assert!(html.contains(&format!(r#"<link rel="canonical" href="{origin}/">"#)));
-            assert!(html.contains(&format!(
-                r#"<link rel="stylesheet" href="{}">"#,
-                asset_path("style", "css", CSS)
-            )));
-            assert!(html.contains(&format!(
-                r#"<script defer src="{}"></script>"#,
-                asset_path("app", "js", JS)
-            )));
-            assert!(!html.contains("{{"));
-            assert!(!html.contains("untrusted.example"));
+        let response = client.get(&base).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-cache");
+        let html = response.text().await.unwrap();
+        assert!(html.contains(&format!(
+            r#"<link rel="stylesheet" href="{}">"#,
+            asset_path("style", "css", CSS)
+        )));
+        assert!(html.contains(&format!(
+            r#"<script defer src="{}"></script>"#,
+            asset_path("app", "js", JS)
+        )));
+        for removed in ["{{", "og:", "twitter:", r#"rel="canonical""#] {
+            assert!(!html.contains(removed), "unexpected markup: {removed}");
         }
         for (path, content, content_type, cache) in [
             (
@@ -460,56 +298,14 @@ mod tests {
             assert_eq!(response.headers()["cache-control"], cache);
             assert_eq!(response.text().await.unwrap(), content);
         }
-        assert_eq!(
-            client
-                .get(format!("{base}/assets/style.0000000000000000.css"))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::NOT_FOUND
-        );
-        let url = format!("{base}{SHARE_IMAGE_PATH}");
-        let response = client
-            .get(&url)
-            .header("user-agent", "Twitterbot/1.0")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()["content-type"], "image/png");
-        assert!(
-            response.headers()["cache-control"]
-                .to_str()
-                .unwrap()
-                .contains("immutable")
-        );
-        let image = response.bytes().await.unwrap();
-        assert_eq!(image.as_ref(), SHARE_IMAGE);
-        assert_eq!(&image[..8], b"\x89PNG\r\n\x1a\n");
-        assert_eq!(u32::from_be_bytes(image[16..20].try_into().unwrap()), 1200);
-        assert_eq!(u32::from_be_bytes(image[20..24].try_into().unwrap()), 630);
-        assert!(image.len() < 5 * 1024 * 1024);
-        let head = client
-            .head(&url)
-            .header("user-agent", "Discordbot/2.0")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(head.status(), StatusCode::OK);
-        assert_eq!(head.headers()["content-type"], "image/png");
-        assert_eq!(
-            head.headers()["content-length"],
-            SHARE_IMAGE.len().to_string()
-        );
-        assert!(head.bytes().await.unwrap().is_empty());
-        let robots = client
-            .get(format!("{base}/robots.txt"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(robots.status(), StatusCode::OK);
-        assert_eq!(robots.text().await.unwrap(), "User-agent: *\nAllow: /\n");
+        for path in [
+            "/assets/style.0000000000000000.css",
+            "/share/utalink-v1.png",
+            "/robots.txt",
+        ] {
+            let response = client.get(format!("{base}{path}")).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
         server.abort();
     }
 
