@@ -2,13 +2,13 @@ use regex::Regex;
 use reqwest::blocking::Client;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use unicode_normalization::UnicodeNormalization;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SearchMode {
     Pronunciation,
     Karaoke,
@@ -44,10 +44,23 @@ pub struct VideoResult {
     pub kind: VideoKind,
     pub is_recommendation: bool,
     pub is_fallback: bool,
+    pub duration_seconds: Option<u64>,
+    pub is_live: bool,
 }
 
 impl VideoResult {
+    #[cfg(test)]
     fn raw(title: String, video_id: String, channel: String) -> Self {
+        Self::raw_with_meta(title, video_id, channel, None, false)
+    }
+
+    fn raw_with_meta(
+        title: String,
+        video_id: String,
+        channel: String,
+        duration_seconds: Option<u64>,
+        is_live: bool,
+    ) -> Self {
         Self {
             title,
             url: format!("https://www.youtube.com/watch?v={video_id}"),
@@ -58,6 +71,23 @@ impl VideoResult {
             kind: VideoKind::General,
             is_recommendation: false,
             is_fallback: false,
+            duration_seconds,
+            is_live,
+        }
+    }
+
+    pub fn duration_label(&self) -> Option<String> {
+        if self.is_live {
+            return Some("실시간".to_owned());
+        }
+        let total = self.duration_seconds?;
+        let hours = total / 3600;
+        let minutes = (total % 3600) / 60;
+        let seconds = total % 60;
+        if hours > 0 {
+            Some(format!("{hours}:{minutes:02}:{seconds:02}"))
+        } else {
+            Some(format!("{minutes}:{seconds:02}"))
         }
     }
 
@@ -101,6 +131,19 @@ const SUBTITLE_TERMS: &[&str] = &[
     "한국어 자막",
     "자체자막",
     "자체 자막",
+    "한글번역",
+    "한글 번역",
+    "한국어번역",
+    "한국어 번역",
+    "가사번역",
+    "가사 번역",
+    "가사해석",
+    "가사 해석",
+    "한글해석",
+    "한글 해석",
+    "한국어 해석",
+    "kor sub",
+    "korean sub",
 ];
 
 const OPENING_TERMS: &[&str] = &["op", "오프닝", "opening"];
@@ -152,6 +195,7 @@ struct SearchProfile {
     recommendation_context: Option<&'static str>,
     context_aliases: Vec<String>,
     is_work_query: bool,
+    is_alias_expanded: bool,
 }
 
 pub fn normalize(value: &str) -> String {
@@ -176,6 +220,60 @@ fn query_tokens(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_modifier_token(token: &str) -> bool {
+    matches!(
+        token,
+        "op" | "ed"
+            | "오프닝"
+            | "엔딩"
+            | "opening"
+            | "ending"
+            | "official"
+            | "original"
+            | "원곡"
+            | "해석"
+            | "번역"
+            | "lyrics"
+            | "lyric"
+            | "full"
+            | "hd"
+            | "mv"
+            | "music"
+            | "video"
+            | "한글발음"
+            | "한국어발음"
+            | "한글독음"
+            | "한글"
+            | "한국어"
+            | "발음"
+            | "독음"
+            | "자막"
+            | "한글자막"
+            | "한국어자막"
+            | "가사"
+            | "노래방"
+            | "karaoke"
+            | "카라오케"
+            | "반주"
+            | "mr"
+    )
+}
+
+fn title_segments(text: &str) -> Vec<String> {
+    text.split([
+        '-', '–', '—', '/', '|', ':', '(', ')', '[', ']', '【', '】', '「', '」', '『', '』', ',',
+    ])
+    .map(|part| {
+        query_tokens(part)
+            .into_iter()
+            .filter(|token| !is_modifier_token(token))
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
+    .filter(|part| !part.is_empty())
+    .collect()
+}
+
 /// Match a complete name across punctuation/spacing, without matching fragments
 /// such as `love` in `clover` or `노래` in `노래방`. Single-character songs count.
 fn matches_name(title: &str, name: &str) -> bool {
@@ -193,6 +291,44 @@ fn matches_name(title: &str, name: &str) -> bool {
             }
             if candidate.len() >= target.len() {
                 break;
+            }
+        }
+    }
+    false
+}
+
+/// Matches "artist + song" or "song + artist" queries when the parts appear in
+/// separate title segments (e.g. `아이돌 - 요아소비`) or across title and channel.
+fn matches_split_query(title: &str, channel: &str, name: &str) -> bool {
+    let words = query_tokens(name);
+    if words.len() < 2 {
+        return false;
+    }
+    let segments = title_segments(title);
+    if segments.is_empty() {
+        return false;
+    }
+    for split in 1..words.len() {
+        let left = words[..split].join(" ");
+        let right = words[split..].join(" ");
+        for (i, segment) in segments.iter().enumerate() {
+            if matches_name(segment, &left) {
+                let other_segment = segments
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| j != i && matches_name(other, &right));
+                if other_segment || matches_name(channel, &right) {
+                    return true;
+                }
+            }
+            if matches_name(segment, &right) {
+                let other_segment = segments
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| j != i && matches_name(other, &left));
+                if other_segment || matches_name(channel, &left) {
+                    return true;
+                }
             }
         }
     }
@@ -269,6 +405,80 @@ fn matching_terms(title: &str, terms: &[&str]) -> Vec<String> {
         .collect()
 }
 
+struct AliasRule {
+    triggers: &'static [&'static str],
+    expanded_title: &'static str,
+    identities: &'static [&'static str],
+    artist_query: &'static str,
+    artist_aliases: &'static [&'static str],
+}
+
+const ALIAS_RULES: &[AliasRule] = &[
+    AliasRule {
+        triggers: &["키미노마치마데", "키미노 마치마데"],
+        expanded_title: "키미노마치마데 너의 거리까지 君の街まで ASIAN KUNG-FU GENERATION 아지캉",
+        identities: &["키미노마치마데", "키미노 마치마데", "너의 거리까지", "君の街まで"],
+        artist_query: "ASIAN KUNG-FU GENERATION 아지캉",
+        artist_aliases: &["ASIAN KUNG-FU GENERATION", "아지캉"],
+    },
+    AliasRule {
+        triggers: &["두근어질"],
+        expanded_title: "두근어질 きゅうくらりん Kyu-kurarin 이요와 iyowa",
+        identities: &["두근어질", "きゅうくらりん", "kyu-kurarin", "kyu kurarin", "큐쿠라린"],
+        artist_query: "이요와 iyowa",
+        artist_aliases: &["이요와", "iyowa"],
+    },
+    AliasRule {
+        triggers: &["잇떼", "잇테"],
+        expanded_title: "잇떼 말해줘 言って 요루시카",
+        identities: &["잇떼", "잇테", "말해줘", "言って"],
+        artist_query: "요루시카 ヨルシカ",
+        artist_aliases: &["요루시카", "ヨルシカ", "yorushika"],
+    },
+    AliasRule {
+        triggers: &["dscf"],
+        expanded_title: "DSCF 망상감상대상연맹 妄想感傷代償連盟 DECO*27",
+        identities: &["dscf", "망상감상대상연맹", "妄想感傷代償連盟"],
+        artist_query: "DECO*27",
+        artist_aliases: &["DECO*27", "데코니나"],
+    },
+    AliasRule {
+        triggers: &["밤을 달리다", "밤을달리다"],
+        expanded_title: "밤을 달리다 夜に駆ける Yoru ni Kakeru 요아소비 YOASOBI",
+        identities: &["밤을 달리다", "밤을달리다", "夜に駆ける", "yoru ni kakeru"],
+        artist_query: "요아소비 YOASOBI",
+        artist_aliases: &["요아소비", "yoasobi"],
+    },
+    AliasRule {
+        triggers: &["괴수의 꽃노래", "괴수의꽃노래"],
+        expanded_title: "괴수의 꽃노래 怪獣の花唄 바운디 Vaundy",
+        identities: &["괴수의 꽃노래", "괴수의꽃노래", "怪獣の花唄", "kaiju no hanauta"],
+        artist_query: "바운디 Vaundy",
+        artist_aliases: &["바운디", "vaundy"],
+    },
+    AliasRule {
+        triggers: &["누덕누덕 스타카토", "누덕누덕스타카토"],
+        expanded_title: "누덕누덕 스타카토 ツギハギスタッカート 토아 toa",
+        identities: &["누덕누덕 스타카토", "누덕누덕스타카토", "ツギハギスタッカート", "tsugihagi staccato"],
+        artist_query: "토아 toa 보컬로이드",
+        artist_aliases: &["토아", "toa"],
+    },
+    AliasRule {
+        triggers: &["천본앵", "센본자쿠라"],
+        expanded_title: "천본앵 센본자쿠라 千本桜 하츠네 미쿠",
+        identities: &["천본앵", "센본자쿠라", "千本桜", "senbonzakura"],
+        artist_query: "하츠네 미쿠 보컬로이드",
+        artist_aliases: &["하츠네 미쿠", "미쿠", "쿠로우사"],
+    },
+    AliasRule {
+        triggers: &["잔혹한 천사의 테제", "잔혹한천사의테제"],
+        expanded_title: "잔혹한 천사의 테제 残酷な天使のテーゼ 에반게리온",
+        identities: &["잔혹한 천사의 테제", "잔혹한천사의테제", "残酷な天使のテーゼ"],
+        artist_query: "타카하시 요코 에반게리온",
+        artist_aliases: &["타카하시 요코", "高橋洋子", "에반게리온"],
+    },
+];
+
 fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
     let mut profile = expand_alias_title(song_title)?;
     profile.media_kind = media_kind(song_title).or(profile.media_kind);
@@ -281,44 +491,7 @@ fn expand_search_title(song_title: &str) -> Result<SearchProfile, String> {
         let without_season = season_regex().replace_all(&normalized, " ");
         let names: Vec<_> = query_tokens(&without_season)
             .into_iter()
-            .filter(|token| {
-                !matches!(
-                    token.as_str(),
-                    "op" | "ed"
-                        | "오프닝"
-                        | "엔딩"
-                        | "opening"
-                        | "ending"
-                        | "official"
-                        | "original"
-                        | "원곡"
-                        | "해석"
-                        | "번역"
-                        | "lyrics"
-                        | "lyric"
-                        | "full"
-                        | "hd"
-                        | "mv"
-                        | "music"
-                        | "video"
-                        | "한글발음"
-                        | "한국어발음"
-                        | "한글독음"
-                        | "한글"
-                        | "한국어"
-                        | "발음"
-                        | "독음"
-                        | "자막"
-                        | "한글자막"
-                        | "한국어자막"
-                        | "가사"
-                        | "노래방"
-                        | "karaoke"
-                        | "카라오케"
-                        | "반주"
-                        | "mr"
-                )
-            })
+            .filter(|token| !is_modifier_token(token))
             .collect();
         let name = names.join(" ");
         if !name.is_empty() {
@@ -338,51 +511,16 @@ fn expand_alias_title(song_title: &str) -> Result<SearchProfile, String> {
     if clean.is_empty() {
         return Err("음악 제목을 입력해 주세요.".to_owned());
     }
-    if matches_name(&clean, "키미노마치마데") {
-        return Ok(alias_profile(
-            "키미노마치마데 너의 거리까지 君の街まで ASIAN KUNG-FU GENERATION 아지캉",
-            &[
-                "키미노마치마데",
-                "키미노 마치마데",
-                "너의 거리까지",
-                "君の街まで",
-            ],
-            "ASIAN KUNG-FU GENERATION 아지캉",
-            &["ASIAN KUNG-FU GENERATION", "아지캉"],
-        ));
-    }
 
-    if matches_name(&clean, "두근어질") {
-        return Ok(alias_profile(
-            "두근어질 きゅうくらりん Kyu-kurarin 이요와 iyowa",
-            &[
-                "두근어질",
-                "きゅうくらりん",
-                "kyu-kurarin",
-                "kyu kurarin",
-                "큐쿠라린",
-            ],
-            "이요와 iyowa",
-            &["이요와", "iyowa"],
-        ));
-    }
-
-    if matches_name(&clean, "잇떼") || matches_name(&clean, "잇테") {
-        return Ok(alias_profile(
-            "잇떼 말해줘 言って 요루시카",
-            &["잇떼", "잇테", "말해줘", "言って"],
-            "요루시카 ヨルシカ",
-            &["요루시카", "ヨルシカ", "yorushika"],
-        ));
-    }
-
-    if matches_name(&clean, "dscf") {
-        return Ok(alias_profile(
-            "DSCF 망상감상대상연맹 妄想感傷代償連盟 DECO*27",
-            &["dscf", "망상감상대상연맹", "妄想感傷代償連盟"],
-            "DECO*27",
-            &["DECO*27", "데코니나"],
-        ));
+    for rule in ALIAS_RULES {
+        if rule.triggers.iter().any(|trigger| matches_name(&clean, trigger)) {
+            return Ok(alias_profile(
+                rule.expanded_title,
+                rule.identities,
+                rule.artist_query,
+                rule.artist_aliases,
+            ));
+        }
     }
 
     if matches_name(&clean, "토키메키 포포롱") {
@@ -423,13 +561,14 @@ fn expand_alias_title(song_title: &str) -> Result<SearchProfile, String> {
     }
 
     Ok(SearchProfile {
-        expanded_title: expanded.clone(),
+        expanded_title: expanded,
         media_kind: None,
         season: None,
         identity_tokens: Vec::new(),
         recommendation_context: None,
         context_aliases: Vec::new(),
         is_work_query: false,
+        is_alias_expanded: false,
     })
 }
 
@@ -446,6 +585,7 @@ fn media_profile(title: &str, kind: &'static str, identities: &[&str]) -> Search
             "ご注文はうさぎですか".into(),
         ],
         is_work_query: true,
+        is_alias_expanded: true,
     }
 }
 
@@ -463,6 +603,7 @@ fn alias_profile(
         recommendation_context: Some(artist),
         context_aliases: artists.iter().map(|item| normalize(item)).collect(),
         is_work_query: false,
+        is_alias_expanded: true,
     }
 }
 
@@ -480,10 +621,15 @@ fn build_queries(profile: &SearchProfile, mode: SearchMode) -> Vec<String> {
             format!("{title} 애니 주제가"),
             format!("{context} 한글발음 가사 독음"),
         ],
-        SearchMode::Pronunciation => vec![
+        SearchMode::Pronunciation if profile.is_alias_expanded => vec![
             format!("{title} 한글발음 lyrics"),
             format!("{title} 원곡 한국어해석 독음 일본어 자막"),
             format!("{context} 한글발음 가사 독음"),
+        ],
+        SearchMode::Pronunciation => vec![
+            format!("{title} 한글발음 가사"),
+            format!("{title} 한글자막 가사 번역 해석"),
+            format!("{context} 발음 독음 lyrics"),
         ],
     }
 }
@@ -503,6 +649,54 @@ fn text_from_renderer(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+const MAX_RELAY_DURATION_SECONDS: u64 = 1800;
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(180);
+const SEARCH_CACHE_MAX_ENTRIES: usize = 32;
+
+fn parse_duration_seconds(text: &str) -> Option<u64> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parts: Vec<u64> = trimmed
+        .split(':')
+        .map(|part| part.trim().parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    match parts.as_slice() {
+        [minutes, seconds] if *seconds < 60 => Some(minutes * 60 + seconds),
+        [hours, minutes, seconds] if *minutes < 60 && *seconds < 60 => {
+            Some(hours * 3600 + minutes * 60 + seconds)
+        }
+        _ => None,
+    }
+}
+
+fn renderer_is_live(renderer: &Value, length_text: &str) -> bool {
+    let live_badge = renderer
+        .get("badges")
+        .and_then(Value::as_array)
+        .is_some_and(|badges| {
+            badges.iter().any(|badge| {
+                let style = badge["metadataBadgeRenderer"]["style"].as_str().unwrap_or("");
+                let label = badge["metadataBadgeRenderer"]["label"].as_str().unwrap_or("");
+                style == "BADGE_STYLE_TYPE_LIVE_NOW"
+                    || label.eq_ignore_ascii_case("live")
+                    || label.contains("실시간")
+            })
+        });
+    let live_overlay = renderer
+        .get("thumbnailOverlays")
+        .and_then(Value::as_array)
+        .is_some_and(|overlays| {
+            overlays.iter().any(|overlay| {
+                overlay["thumbnailOverlayTimeStatusRenderer"]["style"]
+                    .as_str()
+                    .is_some_and(|style| style == "LIVE")
+            })
+        });
+    live_badge || live_overlay || (length_text.is_empty() && renderer.get("upcomingEventData").is_some())
+}
+
 fn collect_video_renderers(
     value: &Value,
     output: &mut Vec<VideoResult>,
@@ -516,8 +710,11 @@ fn collect_video_renderers(
             {
                 let title = text_from_renderer(&renderer["title"]);
                 let channel = text_from_renderer(&renderer["ownerText"]);
+                let length_text = text_from_renderer(&renderer["lengthText"]);
+                let duration_seconds = parse_duration_seconds(&length_text);
+                let is_live = renderer_is_live(renderer, &length_text);
                 if !title.is_empty() {
-                    output.push(VideoResult::raw(
+                    output.push(VideoResult::raw_with_meta(
                         title,
                         video_id.to_owned(),
                         if channel.is_empty() {
@@ -525,6 +722,8 @@ fn collect_video_renderers(
                         } else {
                             channel
                         },
+                        duration_seconds,
+                        is_live,
                     ));
                 }
             }
@@ -631,22 +830,28 @@ fn media_conflicts(title: &str, profile: &SearchProfile) -> bool {
             .is_some_and(|season| seasons(title).iter().any(|found| *found != season))
 }
 
-fn is_song_match(title: &str, profile: &SearchProfile) -> bool {
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum MatchStrength {
+    Contiguous,
+    SplitSegment,
+}
+
+fn match_song(title: &str, channel: Option<&str>, profile: &SearchProfile) -> Option<MatchStrength> {
     if media_conflicts(title, profile) {
-        return false;
+        return None;
     }
     if profile
         .identity_tokens
         .iter()
         .any(|name| matches_name(title, name))
     {
-        return true;
+        return Some(MatchStrength::Contiguous);
     }
     // Work names alone do not identify a song. A work query also needs positive
     // evidence for every requested descriptor, not merely an absence of conflicts.
     let normalized = normalize(title);
     let without_season = season_regex().replace_all(&normalized, " ");
-    profile.is_work_query
+    if profile.is_work_query
         && profile
             .context_aliases
             .iter()
@@ -657,6 +862,32 @@ fn is_song_match(title: &str, profile: &SearchProfile) -> bool {
         && profile
             .season
             .is_none_or(|season| seasons(title).contains(&season))
+    {
+        return Some(MatchStrength::Contiguous);
+    }
+    if !profile.is_work_query
+        && profile.context_aliases.is_empty()
+        && let Some(channel) = channel
+        && profile
+            .identity_tokens
+            .iter()
+            .any(|name| matches_split_query(title, channel, name))
+    {
+        return Some(MatchStrength::SplitSegment);
+    }
+    None
+}
+
+#[cfg(test)]
+fn is_song_match(title: &str, profile: &SearchProfile) -> bool {
+    match_song(title, None, profile).is_some()
+}
+
+fn is_relay_playable(result: &VideoResult) -> bool {
+    !result.is_live
+        && result
+            .duration_seconds
+            .is_none_or(|duration| duration <= MAX_RELAY_DURATION_SECONDS)
 }
 
 fn rank_results(
@@ -667,10 +898,15 @@ fn rank_results(
     let mut direct = Vec::new();
     let mut recommendations = Vec::new();
     for (position, mut result) in results.into_iter().enumerate() {
+        if !is_relay_playable(&result) {
+            continue;
+        }
         let Some(kind) = classify(&result.title, mode) else {
             continue;
         };
-        let is_exact = is_song_match(&result.title, profile);
+        let strength = match_song(&result.title, Some(&result.channel), profile);
+        let is_exact = strength.is_some();
+        let is_contiguous = strength == Some(MatchStrength::Contiguous);
         let context = format!("{} {}", result.title, result.channel);
         let related = profile.context_aliases.iter().any(|name| {
             let normalized = normalize(&result.title);
@@ -694,7 +930,8 @@ fn rank_results(
         // Bounded tiers: lower-priority evidence can never outweigh song/type
         // identity, studio-vs-performance, or source preference. Score is a sort
         // key, not a confidence percentage. Stable sorting preserves input ties.
-        result.score = i32::from(is_exact) * 100_000
+        result.score = i32::from(is_exact) * 200_000
+            + i32::from(is_contiguous) * 50_000
             + i32::from(kind.satisfies(mode)) * 10_000
             + i32::from(!performance) * 1_000
             + i32::from(preferred_source) * 100
@@ -721,29 +958,56 @@ fn rank_results(
     direct
 }
 
+fn shared_client() -> Result<&'static Client, String> {
+    static CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+    match CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(Duration::from_secs(25))
+            .user_agent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138 Safari/537.36",
+            )
+            .build()
+            .map_err(|error| format!("HTTP 클라이언트 생성 실패: {error}"))
+    }) {
+        Ok(client) => Ok(client),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+#[derive(Default)]
+struct SearchCache {
+    entries: HashMap<(String, SearchMode, usize), (Instant, Vec<VideoResult>)>,
+}
+
+fn search_cache() -> &'static Mutex<SearchCache> {
+    static CACHE: OnceLock<Mutex<SearchCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(SearchCache::default()))
+}
+
 pub fn search_youtube(
     song_title: &str,
     mode: SearchMode,
     limit: usize,
 ) -> Result<Vec<VideoResult>, String> {
     let profile = expand_search_title(song_title)?;
+    let cache_key = (normalize(song_title), mode, limit);
+    if let Ok(mut cache) = search_cache().lock() {
+        cache
+            .entries
+            .retain(|_, (cached_at, _)| cached_at.elapsed() < SEARCH_CACHE_TTL);
+        if let Some((_, cached)) = cache.entries.get(&cache_key) {
+            return Ok(cached.clone());
+        }
+    }
+
     let mut queries = build_queries(&profile, mode);
     // Keep the user's unfiltered YouTube search available for a graceful fallback.
     queries.push(song_title.trim().to_owned());
-    let client = Client::builder()
-        .timeout(Duration::from_secs(25))
-        .user_agent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138 Safari/537.36",
-        )
-        .build()
-        .map_err(|error| format!("HTTP 클라이언트 생성 실패: {error}"))?;
+    let client = shared_client()?;
 
     let handles: Vec<_> = queries
         .into_iter()
-        .map(|query| {
-            let client = client.clone();
-            thread::spawn(move || search_query(&client, &query, limit))
-        })
+        .map(|query| thread::spawn(move || search_query(client, &query, limit)))
         .collect();
 
     let mut batches = Vec::new();
@@ -752,20 +1016,25 @@ pub fn search_youtube(
         match handle.join() {
             Ok(Ok(results)) => batches.push(results),
             Ok(Err(error)) => {
-                errors.push(error);
+                if !errors.contains(&error) {
+                    errors.push(error);
+                }
                 batches.push(Vec::new());
             }
             Err(_) => {
-                errors.push("검색 작업이 비정상 종료됐습니다.".to_owned());
+                let error = "검색 작업이 비정상 종료됐습니다.".to_owned();
+                if !errors.contains(&error) {
+                    errors.push(error);
+                }
                 batches.push(Vec::new());
             }
         }
     }
     if batches.iter().all(Vec::is_empty) {
-        return Err(errors
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "검색 결과가 없습니다.".to_owned()));
+        if !errors.is_empty() {
+            return Err(errors.join(" / "));
+        }
+        return Ok(Vec::new());
     }
 
     let general = batches.pop().unwrap_or_default();
@@ -781,16 +1050,33 @@ pub fn search_youtube(
             }
         }
     }
-    Ok(with_general_fallback(
+    let final_results = with_general_fallback(
         rank_results(interleaved, &profile, mode),
         general,
         mode,
-    ))
+    );
+    if !final_results.is_empty()
+        && let Ok(mut cache) = search_cache().lock()
+    {
+        if cache.entries.len() >= SEARCH_CACHE_MAX_ENTRIES
+            && let Some(oldest_key) = cache
+                .entries
+                .iter()
+                .min_by_key(|(_, (cached_at, _))| *cached_at)
+                .map(|(k, _)| k.clone())
+        {
+            cache.entries.remove(&oldest_key);
+        }
+        cache
+            .entries
+            .insert(cache_key, (Instant::now(), final_results.clone()));
+    }
+    Ok(final_results)
 }
 
 fn with_general_fallback(
     ranked: Vec<VideoResult>,
-    general: Vec<VideoResult>,
+    mut general: Vec<VideoResult>,
     mode: SearchMode,
 ) -> Vec<VideoResult> {
     if ranked
@@ -799,6 +1085,8 @@ fn with_general_fallback(
     {
         return ranked;
     }
+    // Prefer playable general videos (<30 min, non-live) ahead of long mixes or streams.
+    general.sort_by_key(|item| !is_relay_playable(item));
     // Preserve identified subtitle candidates as subtitles, even when the same
     // URL also appears in the general search. Other general results keep order.
     let subtitles: HashSet<_> = ranked
@@ -1302,5 +1590,99 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn parses_duration_and_filters_live_or_too_long_videos() {
+        assert_eq!(parse_duration_seconds("3:45"), Some(225));
+        assert_eq!(parse_duration_seconds("1:02:03"), Some(3723));
+        assert_eq!(parse_duration_seconds("0:59"), Some(59));
+        assert_eq!(parse_duration_seconds("LIVE"), None);
+
+        let profile = expand_search_title("잇떼").unwrap();
+        let normal = VideoResult::raw_with_meta(
+            "요루시카 - 말해줘 言って 한글발음".into(),
+            "aaaaaaaaaaa".into(),
+            "채널".into(),
+            Some(243),
+            false,
+        );
+        let live = VideoResult::raw_with_meta(
+            "요루시카 - 말해줘 言って 한글발음".into(),
+            "bbbbbbbbbbb".into(),
+            "채널".into(),
+            None,
+            true,
+        );
+        let long_loop = VideoResult::raw_with_meta(
+            "요루시카 - 말해줘 言って 한글발음 1시간".into(),
+            "ccccccccccc".into(),
+            "채널".into(),
+            Some(3600),
+            false,
+        );
+        let ranked = rank_results(vec![live, long_loop, normal], &profile, SearchMode::Pronunciation);
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].url.ends_with("aaaaaaaaaaa"));
+        assert_eq!(ranked[0].duration_label().as_deref(), Some("4:03"));
+    }
+
+    #[test]
+    fn split_artist_song_queries_match_delimited_titles_and_channels() {
+        let profile = expand_search_title("요아소비 아이돌").unwrap();
+        let ranked = rank_results(
+            vec![
+                VideoResult::raw(
+                    "아이돌 (Idol) - YOASOBI / 요아소비 한글발음".into(),
+                    "bbbbbbbbbbb".into(),
+                    "채널".into(),
+                ),
+                VideoResult::raw(
+                    "요아소비 아이돌 한글발음".into(),
+                    "aaaaaaaaaaa".into(),
+                    "가사채널".into(),
+                ),
+            ],
+            &profile,
+            SearchMode::Pronunciation,
+        );
+        assert_eq!(ranked.len(), 2);
+        assert!(ranked[0].url.ends_with("aaaaaaaaaaa"));
+        assert!(ranked[1].url.ends_with("bbbbbbbbbbb"));
+        assert!(!ranked[0].is_recommendation && !ranked[1].is_recommendation);
+
+        let channel_profile = expand_search_title("요루시카 잇떼").unwrap();
+        let channel_ranked = rank_results(
+            vec![VideoResult::raw(
+                "말해줘 (言って) 한글발음".into(),
+                "ccccccccccc".into(),
+                "요루시카".into(),
+            )],
+            &channel_profile,
+            SearchMode::Pronunciation,
+        );
+        assert_eq!(channel_ranked.len(), 1);
+        assert!(!channel_ranked[0].is_recommendation);
+    }
+
+    #[test]
+    fn recognizes_expanded_subtitle_terms_and_aliases() {
+        assert_eq!(
+            classify("노래 제목 한글 번역", SearchMode::Pronunciation),
+            Some(VideoKind::Subtitle)
+        );
+        assert_eq!(
+            classify("노래 제목 가사해석", SearchMode::Pronunciation),
+            Some(VideoKind::Subtitle)
+        );
+        assert_eq!(
+            classify("Song Title kor sub", SearchMode::Pronunciation),
+            Some(VideoKind::Subtitle)
+        );
+        let night = expand_search_title("밤을 달리다").unwrap();
+        assert!(night.is_alias_expanded);
+        assert!(night.identity_tokens.iter().any(|t| t == "夜に駆ける"));
+        let kaiju = expand_search_title("괴수의 꽃노래").unwrap();
+        assert!(kaiju.identity_tokens.iter().any(|t| t == "怪獣の花唄"));
     }
 }

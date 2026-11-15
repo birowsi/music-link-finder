@@ -1187,6 +1187,13 @@ impl Session {
             );
         }
         let route = format!("/v/{}/{id}.mp4", self.secret);
+        let cached_expired = matches!(
+            self.server.routes.read().unwrap().get(&route),
+            Some(MediaSource::Buffered(stream)) if stream.is_expired()
+        );
+        if cached_expired {
+            self.server.routes.write().unwrap().remove(&route);
+        }
         if self.server.routes.read().unwrap().contains_key(&route) {
             self.wait_for_tunnel(cancelled)?;
             let url = format!("{}{route}", self.public_url);

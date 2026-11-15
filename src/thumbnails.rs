@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     ptr::null_mut,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     thread,
@@ -132,6 +132,20 @@ fn fetch(client: &reqwest::blocking::Client, url: &str, generation: u64) -> Opti
     Some(path)
 }
 
+fn shared_client() -> Option<&'static reqwest::blocking::Client> {
+    static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(8))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .ok()
+        })
+        .as_ref()
+}
+
 impl Thumbnails {
     pub fn clear(&mut self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
@@ -150,18 +164,12 @@ impl Thumbnails {
                 .collect::<VecDeque<_>>(),
         ));
         thread::spawn(move || {
-            let client = reqwest::blocking::Client::builder()
-                .connect_timeout(Duration::from_secs(3))
-                .timeout(Duration::from_secs(8))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .ok();
+            let client = shared_client();
             thread::scope(|scope| {
                 for _ in 0..3 {
                     let queue = &queue;
                     let active = &active;
                     let notify = &notify;
-                    let client = &client;
                     scope.spawn(move || {
                         loop {
                             if active.load(Ordering::SeqCst) != generation {
@@ -170,9 +178,7 @@ impl Thumbnails {
                             let Some(key) = queue.lock().unwrap().pop_front() else {
                                 return;
                             };
-                            let path = client
-                                .as_ref()
-                                .and_then(|client| fetch(client, &key, generation));
+                            let path = client.and_then(|client| fetch(client, &key, generation));
                             let message = Message {
                                 generation,
                                 key,

@@ -1366,7 +1366,7 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                 "검색"
             },
             ButtonStyle::Primary,
-            !state.loading,
+            true,
             dpi,
         );
         draw_custom_button(
@@ -1539,9 +1539,13 @@ unsafe fn paint_ui(hwnd: HWND, state: &AppState) {
                 multiline,
             );
             let kind = item.kind_label();
+            let meta = match item.duration_label() {
+                Some(duration) => format!("{kind}  |  {duration}  |  {}", item.channel),
+                None => format!("{kind}  |  {}", item.channel),
+            };
             draw_text(
                 dc,
-                &format!("{}  |  {}", kind, item.channel),
+                &meta,
                 r(
                     left,
                     rect.bottom - s(30),
@@ -1876,9 +1880,6 @@ unsafe fn open_selected(hwnd: HWND, state: &mut AppState) {
 }
 
 unsafe fn start_search(hwnd: HWND, state: &mut AppState) {
-    if state.loading {
-        return;
-    }
     let query = unsafe { get_text(state.query) }.trim().to_owned();
     if query.is_empty() {
         state.empty_title = "";
@@ -2896,6 +2897,8 @@ mod input_tests {
                 url: String::new(),
                 channel: String::new(),
                 thumbnail_url: String::new(),
+                duration_seconds: None,
+                is_live: false,
                 score: 0,
                 matched: Vec::new(),
                 kind: music_link_finder::search::VideoKind::Pronunciation,

@@ -108,6 +108,9 @@ async fn search(Query(params): Query<SearchParams>) -> Response {
             "results": results.into_iter().map(|item| serde_json::json!({
                 "title": item.title, "url": item.url, "channel": item.channel,
                 "thumbnail_url": item.thumbnail_url,
+                "duration_seconds": item.duration_seconds,
+                "duration_label": item.duration_label(),
+                "is_live": item.is_live,
                 "score": item.score, "matched": item.matched,
                 "kind": item.kind,
                 "is_recommendation": item.is_recommendation,

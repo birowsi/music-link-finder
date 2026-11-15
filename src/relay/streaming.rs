@@ -10,19 +10,26 @@ use std::{
     collections::{HashMap, VecDeque},
     io::{self, Read},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const CHUNK_SIZE: u64 = 256 * 1024;
 const CACHE_CHUNKS: usize = 32; // At most 8 MiB per active video.
+const STREAM_URL_TTL: Duration = Duration::from_secs(4 * 3600);
 
 #[derive(Default)]
 struct ChunkCache {
     chunks: HashMap<u64, Arc<Vec<u8>>>,
     order: VecDeque<u64>,
+    in_flight: HashMap<u64, Arc<InFlightSlot>>,
+}
+
+struct InFlightSlot {
+    done: Mutex<Option<Result<Arc<Vec<u8>>, String>>>,
+    ready: Condvar,
 }
 
 pub(super) struct BufferedStream {
@@ -33,15 +40,21 @@ pub(super) struct BufferedStream {
     pub height: u64,
     cache: Mutex<ChunkCache>,
     pub fetched_bytes: AtomicU64,
+    created_at: Instant,
 }
 
 fn client() -> Result<Client, String> {
-    Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())
+    static CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .clone()
 }
 
 fn allowed_url(value: &str) -> bool {
@@ -117,6 +130,7 @@ impl BufferedStream {
             height,
             cache: Mutex::default(),
             fetched_bytes: AtomicU64::new(1),
+            created_at: Instant::now(),
         })))
     }
 
@@ -128,16 +142,11 @@ impl BufferedStream {
         Ok(())
     }
 
-    fn chunk(&self, index: u64) -> io::Result<Arc<Vec<u8>>> {
-        {
-            let cache = self
-                .cache
-                .lock()
-                .map_err(|_| io::Error::other("중계 버퍼 오류"))?;
-            if let Some(chunk) = cache.chunks.get(&index) {
-                return Ok(chunk.clone());
-            }
-        }
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() > STREAM_URL_TTL
+    }
+
+    fn fetch_chunk(&self, index: u64) -> io::Result<Arc<Vec<u8>>> {
         let start = index
             .checked_mul(CHUNK_SIZE)
             .filter(|start| *start < self.size)
@@ -170,22 +179,103 @@ impl BufferedStream {
             return Err(io::Error::other("원본 구간이 불완전합니다."));
         }
         self.fetched_bytes.fetch_add(expected, Ordering::Relaxed);
-        let data = Arc::new(data);
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| io::Error::other("중계 버퍼 오류"))?;
-        if let Some(existing) = cache.chunks.get(&index) {
-            return Ok(existing.clone());
+        Ok(Arc::new(data))
+    }
+
+    fn chunk(&self, index: u64) -> io::Result<Arc<Vec<u8>>> {
+        let (slot, is_leader) = {
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|_| io::Error::other("중계 버퍼 오류"))?;
+            if let Some(chunk) = cache.chunks.get(&index) {
+                return Ok(chunk.clone());
+            }
+            if let Some(existing) = cache.in_flight.get(&index) {
+                (existing.clone(), false)
+            } else {
+                let slot = Arc::new(InFlightSlot {
+                    done: Mutex::new(None),
+                    ready: Condvar::new(),
+                });
+                cache.in_flight.insert(index, slot.clone());
+                (slot, true)
+            }
+        };
+
+        if !is_leader {
+            let mut done = slot
+                .done
+                .lock()
+                .map_err(|_| io::Error::other("중계 버퍼 오류"))?;
+            while done.is_none() {
+                done = slot
+                    .ready
+                    .wait(done)
+                    .map_err(|_| io::Error::other("중계 버퍼 오류"))?;
+            }
+            return match done.as_ref().unwrap() {
+                Ok(data) => Ok(data.clone()),
+                Err(message) => Err(io::Error::other(message.clone())),
+            };
         }
-        while cache.order.len() >= CACHE_CHUNKS {
-            if let Some(oldest) = cache.order.pop_front() {
-                cache.chunks.remove(&oldest);
+
+        struct InFlightCleanup<'a> {
+            cache: &'a Mutex<ChunkCache>,
+            index: u64,
+            slot: &'a Arc<InFlightSlot>,
+            completed: bool,
+        }
+        impl Drop for InFlightCleanup<'_> {
+            fn drop(&mut self) {
+                if self.completed {
+                    return;
+                }
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.in_flight.remove(&self.index);
+                }
+                if let Ok(mut done) = self.slot.done.lock() {
+                    *done = Some(Err("중계 구간 수신이 중단되었습니다.".into()));
+                }
+                self.slot.ready.notify_all();
             }
         }
-        cache.order.push_back(index);
-        cache.chunks.insert(index, data.clone());
-        Ok(data)
+
+        let mut cleanup = InFlightCleanup {
+            cache: &self.cache,
+            index,
+            slot: &slot,
+            completed: false,
+        };
+        let result = self.fetch_chunk(index);
+        if let Ok(ref data) = result {
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|_| io::Error::other("중계 버퍼 오류"))?;
+            cache.in_flight.remove(&index);
+            if !cache.chunks.contains_key(&index) {
+                while cache.order.len() >= CACHE_CHUNKS {
+                    if let Some(oldest) = cache.order.pop_front() {
+                        cache.chunks.remove(&oldest);
+                    }
+                }
+                cache.order.push_back(index);
+                cache.chunks.insert(index, data.clone());
+            }
+        } else if let Ok(mut cache) = self.cache.lock() {
+            cache.in_flight.remove(&index);
+        }
+
+        if let Ok(mut done) = slot.done.lock() {
+            *done = Some(match &result {
+                Ok(data) => Ok(data.clone()),
+                Err(err) => Err(err.to_string()),
+            });
+        }
+        slot.ready.notify_all();
+        cleanup.completed = true;
+        result
     }
 
     pub fn reader(self: &Arc<Self>, start: u64, end: u64) -> io::Result<BufferedReader> {
@@ -262,6 +352,7 @@ mod tests {
             height: 360,
             cache: Mutex::default(),
             fetched_bytes: AtomicU64::new(0),
+            created_at: Instant::now(),
         });
         let mut beginning = Vec::new();
         stream
@@ -291,6 +382,50 @@ mod tests {
         assert_eq!(&cached, &bytes[10..20]);
         assert_eq!(stream.fetched_bytes.load(Ordering::Relaxed), CHUNK_SIZE * 2);
         assert!(stream.reader(CHUNK_SIZE, CHUNK_SIZE + 5).is_err());
+        drop(origin);
+        fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn concurrent_chunk_requests_share_single_fetch_and_track_expiry() {
+        let origin = LocalServer::start().unwrap();
+        let file = std::env::temp_dir().join(format!(
+            "relay-stream-dedup-{}.mp4",
+            token().unwrap()
+        ));
+        let bytes: Vec<u8> = (0..CHUNK_SIZE * 2).map(|n| (n % 251) as u8).collect();
+        fs::write(&file, &bytes).unwrap();
+        origin
+            .routes
+            .write()
+            .unwrap()
+            .insert("/sample.mp4".into(), MediaSource::File(file.clone()));
+        let stream = Arc::new(BufferedStream {
+            client: client().unwrap(),
+            url: format!("http://{}/sample.mp4", origin.address),
+            headers: HeaderMap::new(),
+            size: bytes.len() as u64,
+            height: 360,
+            cache: Mutex::default(),
+            fetched_bytes: AtomicU64::new(0),
+            created_at: Instant::now() - STREAM_URL_TTL - Duration::from_secs(1),
+        });
+        assert!(stream.is_expired());
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..6 {
+                let s = stream.clone();
+                handles.push(scope.spawn(move || {
+                    let mut out = Vec::new();
+                    s.reader(0, 127).unwrap().read_to_end(&mut out).unwrap();
+                    out
+                }));
+            }
+            for h in handles {
+                assert_eq!(h.join().unwrap(), &bytes[..128]);
+            }
+        });
+        assert_eq!(stream.fetched_bytes.load(Ordering::Relaxed), CHUNK_SIZE);
         drop(origin);
         fs::remove_file(file).unwrap();
     }
